@@ -3071,7 +3071,7 @@ function fillProductForm(productId) {
     descripcion: product.descripcion,
     imagen: product.imagen,
     opciones: formatProductOptionsForInput(product.opciones),
-    sabores: formatProductFlavorsForInput(product.sabores),
+    sabores: formatProductFlavorsForInput(productFlavorSource(product)),
     orden: product.orden,
     activo: String(Boolean(product.activo))
   });

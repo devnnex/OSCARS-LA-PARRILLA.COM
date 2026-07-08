@@ -1385,10 +1385,20 @@ select {
   white-space: nowrap;
 }
 
+body[data-admin-view="carta"] #carta .smart-filter-row {
+  grid-template-columns: minmax(220px, 1fr) minmax(128px, 170px) minmax(138px, 180px);
+  width: min(100%, 620px);
+}
+
 .smart-filter-row input,
-.smart-filter-row select {
+.smart-filter-row select,
+.smart-filter-row button {
   width: 100%;
   min-height: 38px;
+}
+
+.smart-filter-row input,
+.smart-filter-row select {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: var(--text);

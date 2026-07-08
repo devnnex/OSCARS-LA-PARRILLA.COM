@@ -237,7 +237,8 @@ const state = {
   pendingMenuWrites: readPendingMenuWrites(),
   menuFingerprint: "",
   menuSyncInProgress: false,
-  menuPollTimer: null
+  menuPollTimer: null,
+  categoryNoticeTimer: null
 };
 
 const el = {
@@ -790,8 +791,46 @@ function renderCategories() {
       state.activeCategory = button.dataset.category;
       renderCategories();
       renderProducts();
+      showCategoryNotice(state.activeCategory);
     });
   });
+}
+
+function showCategoryNotice(categoryId) {
+  const messages = {
+    burgers: "Todas nuestras hamburguesas vienen acompañadas de papas artesanales a la francesa.",
+    perros: "Todos nuestros perros vienen acompañados de papas artesanales a la francesa."
+  };
+  const message = messages[categoryId];
+  if (!message) return;
+
+  let notice = document.getElementById("category-notice");
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.id = "category-notice";
+    notice.className = "category-notice";
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    document.body.appendChild(notice);
+  }
+
+  notice.innerHTML = `
+    <button class="category-notice-close" type="button" aria-label="Cerrar aviso">x</button>
+    <span class="category-notice-kicker">Oscar's Parrilla</span>
+    <strong>${escapeHtml(labelFromId(categoryId))}</strong>
+    <p>${escapeHtml(message)}</p>
+  `;
+  notice.classList.add("is-visible");
+  notice.querySelector(".category-notice-close")?.addEventListener("click", hideCategoryNotice);
+  window.clearTimeout(state.categoryNoticeTimer);
+  state.categoryNoticeTimer = window.setTimeout(hideCategoryNotice, 5000);
+}
+
+function hideCategoryNotice() {
+  const notice = document.getElementById("category-notice");
+  if (notice) notice.classList.remove("is-visible");
+  window.clearTimeout(state.categoryNoticeTimer);
+  state.categoryNoticeTimer = null;
 }
 
 function categoryCoverImage(category) {
@@ -2411,9 +2450,7 @@ function normalizeProductFlavors(value) {
 }
 
 function getProductFlavors(product) {
-  const configured = normalizeProductFlavors(productFlavorSource(product));
-  if (configured.length) return configured;
-  return inferProductFlavors(product);
+  return normalizeProductFlavors(productFlavorSource(product));
 }
 
 function productFlavorSource(product = {}) {
