@@ -77,6 +77,7 @@
     if (action === "upsertOperationConfig") {
       const operationConfig = normalizeOperationConfig(body.operationConfig || body.operation_config || body.config || {});
       await upsertSetting("operation_config", operationConfig);
+      await syncCategoryCovers(operationConfig.categoryCovers);
       return { ok: true, data: { operationConfig } };
     }
     if (action === "updateOrderStatus") {
@@ -154,7 +155,7 @@
       rows("inventory", { order: ["nombre", true] }),
       rows("inventory_movements", { order: ["fecha", false], limit: 200 }),
       rows("cashiers", { order: ["nombre", true] }),
-      getSetting("operation_config")
+      getOperationConfigWithCovers()
     ]);
     return {
       products,
@@ -192,7 +193,7 @@
       inventoryMovements: await rows("inventory_movements", { order: ["fecha", false], limit: 200 })
     });
     if (section === "cajeros") data.cashiers = await rows("cashiers", { order: ["nombre", true] });
-    if (section === "banco") data.operationConfig = await getSetting("operation_config");
+    if (section === "banco") data.operationConfig = await getOperationConfigWithCovers();
     return data;
   }
 
@@ -200,9 +201,9 @@
     const [products, extras, operationConfig] = await Promise.all([
       rows("products", { activeOnly: true, order: ["orden", true] }),
       rows("extras", { activeOnly: true, order: ["orden", true] }),
-      getSetting("operation_config")
+      getOperationConfigWithCovers()
     ]);
-    return { products, extras, operationConfig, updatedAt: now() };
+    return { products, extras, categoryCovers: operationConfig.categoryCovers, operationConfig, updatedAt: now() };
   }
 
   async function loginStaff(body) {
@@ -243,6 +244,16 @@
     const items = Array.isArray(data) ? data.map(fixMojibakeDeep) : [];
     if (table === "tables") return items.filter(item => clean(item.estado).toLowerCase() !== "eliminada");
     return items;
+  }
+
+  async function safeRows(table, options = {}) {
+    try {
+      return await rows(table, options);
+    } catch (error) {
+      if (!isMissingTableError(error, table)) throw error;
+      console.warn(`Tabla opcional no disponible: ${table}`);
+      return [];
+    }
   }
 
   async function insert(table, item) {
@@ -331,6 +342,83 @@
   function isMissingSettingsTableError(error) {
     const text = `${error?.message || ""} ${error?.details || ""} ${error?.code || ""}`.toLowerCase();
     return text.includes("business_settings") && (text.includes("not find") || text.includes("does not exist") || text.includes("schema cache") || text.includes("42p01"));
+  }
+
+  function isMissingTableError(error, table) {
+    const text = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""} ${error?.code || ""}`.toLowerCase();
+    return text.includes(table.toLowerCase()) &&
+      (text.includes("not find") || text.includes("does not exist") || text.includes("schema cache") || text.includes("42p01"));
+  }
+
+  async function getOperationConfigWithCovers() {
+    const [setting, tableCovers] = await Promise.all([
+      getSetting("operation_config"),
+      tableCategoryCovers()
+    ]);
+    const config = normalizeOperationConfig(setting || {});
+    return normalizeOperationConfig({
+      ...config,
+      categoryCovers: mergeCategoryCovers(config.categoryCovers, tableCovers)
+    });
+  }
+
+  async function tableCategoryCovers() {
+    const covers = await safeRows("category_covers", { order: ["updated_at", false] });
+    return normalizeOperationConfig({ categoryCovers: covers }).categoryCovers;
+  }
+
+  function mergeCategoryCovers(...coverLists) {
+    const byCategory = new Map();
+    coverLists
+      .flatMap(list => Array.isArray(list) ? list : [])
+      .forEach((cover, index) => {
+        const normalized = normalizeOperationConfig({ categoryCovers: [{ ...cover, orden: cover.orden || index + 1 }] }).categoryCovers[0];
+        if (!normalized?.category_id) return;
+        const current = byCategory.get(normalized.category_id);
+        const currentTime = Date.parse(current?.updated_at || "") || 0;
+        const nextTime = Date.parse(normalized.updated_at || "") || 0;
+        if (!current || nextTime >= currentTime) byCategory.set(normalized.category_id, normalized);
+      });
+    return Array.from(byCategory.values()).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  }
+
+  async function syncCategoryCovers(covers = []) {
+    const normalized = normalizeOperationConfig({ categoryCovers: covers }).categoryCovers;
+    if (!normalized.length) return;
+    try {
+      const categories = normalized.map(cover => ({
+        category_id: cover.category_id,
+        nombre: categoryNameFromId(cover.category_id),
+        orden: cover.orden || 0,
+        activo: true,
+        updated_at: now()
+      }));
+      const { error: categoryError } = await db.from("menu_categories").upsert(categories);
+      if (categoryError) throw categoryError;
+      const coverRows = normalized.map(cover => ({
+        category_id: cover.category_id,
+        image_url: cover.image_url,
+        storage_path: cover.storage_path || "",
+        alt_text: categoryNameFromId(cover.category_id),
+        updated_at: cover.updated_at || now()
+      }));
+      const { error: coverError } = await db.from("category_covers").upsert(coverRows);
+      if (coverError) throw coverError;
+    } catch (error) {
+      if (isMissingTableError(error, "category_covers") || isMissingTableError(error, "menu_categories")) {
+        console.warn("No se pudo sincronizar portadas en tablas opcionales", error);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  function categoryNameFromId(categoryId) {
+    return clean(categoryId)
+      .split("-")
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || "Categoria";
   }
 
   async function deactivate(table, key, id) {
