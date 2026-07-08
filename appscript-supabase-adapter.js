@@ -302,9 +302,9 @@
     const { data, error } = await db.from("business_settings").select("value").eq("setting_key", settingKey).limit(1);
     if (error) {
       console.warn("No se pudo leer configuración", error);
-      return readLocalSetting(settingKey);
+      return {};
     }
-    return data?.[0]?.value || readLocalSetting(settingKey);
+    return data?.[0]?.value || {};
   }
 
   async function upsertSetting(settingKey, value) {
@@ -314,8 +314,9 @@
       updated_at: now()
     });
     if (error) {
-      writeLocalSetting(settingKey, value);
-      if (isMissingSettingsTableError(error)) return;
+      if (isMissingSettingsTableError(error)) {
+        throw new Error("Falta ejecutar la migracion de business_settings en Supabase. No se guardo localmente para evitar datos falsos entre navegadores.");
+      }
       throw error;
     }
   }
@@ -351,20 +352,50 @@
   }
 
   async function getOperationConfigWithCovers() {
-    const [setting, tableCovers] = await Promise.all([
+    const [setting, tableCovers, storageCovers] = await Promise.all([
       getSetting("operation_config"),
-      tableCategoryCovers()
+      tableCategoryCovers(),
+      storageCategoryCovers()
     ]);
     const config = normalizeOperationConfig(setting || {});
     return normalizeOperationConfig({
       ...config,
-      categoryCovers: mergeCategoryCovers(config.categoryCovers, tableCovers)
+      categoryCovers: mergeCategoryCovers(config.categoryCovers, tableCovers, storageCovers)
     });
   }
 
   async function tableCategoryCovers() {
     const covers = await safeRows("category_covers", { order: ["updated_at", false] });
     return normalizeOperationConfig({ categoryCovers: covers }).categoryCovers;
+  }
+
+  async function storageCategoryCovers() {
+    const bucket = cfg.imageBucket || "product-images";
+    const folder = "category-covers";
+    const { data, error } = await db.storage.from(bucket).list(folder, { limit: 200 });
+    if (error || !Array.isArray(data)) {
+      if (error) console.warn("No se pudieron leer portadas desde Storage", error);
+      return [];
+    }
+    const latestByCategory = new Map();
+    data.forEach(item => {
+      const name = clean(item.name);
+      const match = name.match(/^(.*)-[0-9]+\.[^.]+$/);
+      if (!match) return;
+      const categoryId = slug(match[1]);
+      const storagePath = `${folder}/${name}`;
+      const cover = {
+        category_id: categoryId,
+        image_url: db.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl,
+        storage_path: storagePath,
+        updated_at: clean(item.updated_at || item.created_at || now())
+      };
+      const current = latestByCategory.get(categoryId);
+      const currentTime = Date.parse(current?.updated_at || "") || 0;
+      const nextTime = Date.parse(cover.updated_at || "") || 0;
+      if (!current || nextTime >= currentTime) latestByCategory.set(categoryId, cover);
+    });
+    return normalizeOperationConfig({ categoryCovers: Array.from(latestByCategory.values()) }).categoryCovers;
   }
 
   function mergeCategoryCovers(...coverLists) {

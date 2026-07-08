@@ -1212,11 +1212,12 @@ async function saveCategoryCover() {
     toast("Selecciona una imagen de portada.");
     return;
   }
+  let uploaded = "";
   try {
     setCategoryCoverProgress(20);
     const categoryId = state.selectedCoverCategory;
     const current = getCategoryCover(categoryId);
-    const uploaded = await uploadSupabaseImage(state.categoryCoverFile, "category-covers", categoryId);
+    uploaded = await uploadSupabaseImage(state.categoryCoverFile, "category-covers", categoryId);
     setCategoryCoverProgress(78);
     const categoryCovers = normalizeCategoryCovers(state.operationConfig.categoryCovers || [])
       .filter(cover => cover.category_id !== categoryId);
@@ -1239,10 +1240,16 @@ async function saveCategoryCover() {
     if (current?.storage_path && current.storage_path !== storagePathFromPublicUrl(uploaded)) {
       void removeSupabaseImage(current.storage_path);
     }
+    void cleanupCategoryCoverUploads(categoryId, storagePathFromPublicUrl(uploaded));
     setCategoryCoverProgress(100);
     toast("Portada guardada.");
   } catch (error) {
     console.warn("No se pudo guardar portada", error);
+    if (uploaded) {
+      removeSupabaseImage(storagePathFromPublicUrl(uploaded)).catch(cleanupError => {
+        console.warn("No se pudo revertir la portada subida", cleanupError);
+      });
+    }
     toast(`No se pudo guardar la portada: ${error.message}`);
   } finally {
     window.setTimeout(() => setCategoryCoverProgress(0), 600);
@@ -4395,7 +4402,29 @@ async function removeSupabaseImage(path) {
   const config = window.OSCARS_SUPABASE || {};
   const client = window.supabase.createClient(config.url, config.anonKey);
   const bucket = config.imageBucket || "product-images";
-  await client.storage.from(bucket).remove([path]);
+  const { error } = await client.storage.from(bucket).remove([path]);
+  if (error) throw error;
+}
+
+async function cleanupCategoryCoverUploads(categoryId, keepPath) {
+  const config = window.OSCARS_SUPABASE || {};
+  const client = window.supabase.createClient(config.url, config.anonKey);
+  const bucket = config.imageBucket || "product-images";
+  const folder = "category-covers";
+  const { data, error } = await client.storage.from(bucket).list(folder, { limit: 200 });
+  if (error || !Array.isArray(data)) {
+    if (error) console.warn("No se pudieron listar portadas antiguas", error);
+    return;
+  }
+  const prefix = `${categoryId}-`;
+  const stalePaths = data
+    .map(item => String(item.name || ""))
+    .filter(name => name.startsWith(prefix))
+    .map(name => name.startsWith(`${folder}/`) ? name : `${folder}/${name}`)
+    .filter(path => path !== keepPath);
+  if (!stalePaths.length) return;
+  const { error: removeError } = await client.storage.from(bucket).remove(stalePaths);
+  if (removeError) console.warn("No se pudieron limpiar portadas antiguas", removeError);
 }
 
 function formatFileSize(bytes = 0) {

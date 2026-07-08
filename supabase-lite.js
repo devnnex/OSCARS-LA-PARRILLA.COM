@@ -36,6 +36,43 @@
                   publicUrl: `${url}/storage/v1/object/public/${bucket}/${encodePath(path)}`
                 }
               };
+            },
+            async list(prefix = "", options = {}) {
+              try {
+                const response = await fetch(`${url}/storage/v1/object/list/${bucket}`, {
+                  method: "POST",
+                  headers: {
+                    ...headers,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    prefix,
+                    limit: options.limit || 100,
+                    offset: options.offset || 0,
+                    sortBy: options.sortBy || { column: "updated_at", order: "desc" }
+                  })
+                });
+                if (!response.ok) return { data: null, error: await toError(response) };
+                return { data: await response.json(), error: null };
+              } catch (error) {
+                return { data: null, error };
+              }
+            },
+            async remove(paths = []) {
+              try {
+                const response = await fetch(`${url}/storage/v1/object/${bucket}`, {
+                  method: "DELETE",
+                  headers: {
+                    ...headers,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({ prefixes: paths })
+                });
+                if (!response.ok) return { data: null, error: await toError(response) };
+                return { data: await response.json(), error: null };
+              } catch (error) {
+                return { data: null, error };
+              }
             }
           };
         }
