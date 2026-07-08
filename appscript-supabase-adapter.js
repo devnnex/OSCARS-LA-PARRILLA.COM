@@ -401,16 +401,22 @@
   function mergeCategoryCovers(...coverLists) {
     const byCategory = new Map();
     coverLists
-      .flatMap(list => Array.isArray(list) ? list : [])
-      .forEach((cover, index) => {
+      .flatMap((list, listIndex) => (Array.isArray(list) ? list : []).map((cover, index) => ({ cover, index, listIndex })))
+      .forEach(({ cover, index, listIndex }) => {
         const normalized = normalizeOperationConfig({ categoryCovers: [{ ...cover, orden: cover.orden || index + 1 }] }).categoryCovers[0];
         if (!normalized?.category_id) return;
+        const sourcePriority = listIndex === 2 ? 1 : 2;
         const current = byCategory.get(normalized.category_id);
+        const currentPriority = current?._sourcePriority || 0;
         const currentTime = Date.parse(current?.updated_at || "") || 0;
         const nextTime = Date.parse(normalized.updated_at || "") || 0;
-        if (!current || nextTime >= currentTime) byCategory.set(normalized.category_id, normalized);
+        if (!current || sourcePriority > currentPriority || (sourcePriority === currentPriority && nextTime >= currentTime)) {
+          byCategory.set(normalized.category_id, { ...normalized, _sourcePriority: sourcePriority });
+        }
       });
-    return Array.from(byCategory.values()).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    return Array.from(byCategory.values())
+      .map(({ _sourcePriority, ...cover }) => cover)
+      .sort((a, b) => (a.orden || 0) - (b.orden || 0));
   }
 
   async function syncCategoryCovers(covers = []) {

@@ -1,5 +1,5 @@
 ﻿const API_URL = "https://script.google.com/macros/s/AKfycbzEnZVzv6_ZSm7B9YtS4ow-csHpI1uDmgRhD6KzAXNtrwKRUWjqXwKYYJqmj6rACZGg/exec";
-const ADMIN_CACHE_KEY = "chanchos_admin_cache_v3";
+const ADMIN_CACHE_KEY = "chanchos_admin_cache_v4";
 const ADMIN_PENDING_KEY = "chanchos_admin_pending_v1";
 const API_TIMEOUT_MS = 18000;
 const API_REALTIME_POLL_MS = 650;
@@ -1241,10 +1241,12 @@ async function saveCategoryCover() {
     renderCategoryCoverModal();
     cacheAdminData();
     await postAdmin("upsertOperationConfig", { operationConfig: state.operationConfig });
-    if (current?.storage_path && current.storage_path !== storagePathFromPublicUrl(uploaded)) {
-      void removeSupabaseImage(current.storage_path);
+    const uploadedPath = storagePathFromPublicUrl(uploaded);
+    const previousPath = current?.storage_path || storagePathFromPublicUrl(current?.image_url);
+    if (previousPath && previousPath !== uploadedPath) {
+      void removeSupabaseImage(previousPath);
     }
-    void cleanupCategoryCoverUploads(categoryId, storagePathFromPublicUrl(uploaded));
+    void cleanupCategoryCoverUploads(categoryId, uploadedPath);
     setCategoryCoverProgress(100);
     toast("Portada guardada.");
   } catch (error) {
@@ -1262,7 +1264,8 @@ async function saveCategoryCover() {
 
 function renderQrPickerPreview(src = "") {
   if (!el.qrPickerPreview) return;
-  el.qrPickerPreview.innerHTML = src ? `<img src="${escapeAttr(src)}" alt="QR configurado">` : "";
+  const previewSrc = versionPublicAssetUrl(src);
+  el.qrPickerPreview.innerHTML = previewSrc ? `<img src="${escapeAttr(previewSrc)}" alt="QR configurado">` : "";
   el.qrPickerPreview.classList.toggle("has-image", Boolean(src));
   if (el.qrPickerCaption) {
     el.qrPickerCaption.textContent = src ? "QR cargado. Puedes cambiarlo seleccionando otra imagen." : "PNG, JPG o WEBP desde este computador";
@@ -1316,7 +1319,7 @@ function renderBankPreview(config = state.operationConfig) {
       <article class="bank-preview-card">
         <span class="eyebrow">Empaque</span>
         <h3>${formatMoney(safeConfig.packagingFee)} por producto</h3>
-        ${safeConfig.qrImage ? `<img src="${escapeAttr(safeConfig.qrImage)}" alt="QR configurado">` : `<p>Sin QR cargado.</p>`}
+        ${safeConfig.qrImage ? `<img src="${escapeAttr(versionPublicAssetUrl(safeConfig.qrImage))}" alt="QR configurado">` : `<p>Sin QR cargado.</p>`}
       </article>
       <article class="bank-preview-card">
         <span class="eyebrow">Métodos activos</span>
@@ -1494,13 +1497,16 @@ async function saveBankConfig() {
   }
   let operationConfig = parseBankForm();
   const qrFile = el.bankQrFile?.files?.[0];
+  const previousQrImage = state.operationConfig?.qrImage || "";
+  let uploadedQrImage = "";
   if (qrFile) {
     try {
       toast("Subiendo QR...");
       const uploaded = await uploadSupabaseImage(qrFile, "bank", "qr-pago");
       if (uploaded) {
-        operationConfig.qrImage = uploaded;
-        if (el.bankConfigForm.elements.qr_image) el.bankConfigForm.elements.qr_image.value = uploaded;
+        uploadedQrImage = uploaded;
+        operationConfig.qrImage = uploadedQrImage;
+        if (el.bankConfigForm.elements.qr_image) el.bankConfigForm.elements.qr_image.value = uploadedQrImage;
         if (el.bankQrFile) el.bankQrFile.value = "";
       }
     } catch (error) {
@@ -1519,6 +1525,17 @@ async function saveBankConfig() {
     state.pendingWrites = state.pendingWrites.filter(item => !(item.action === pending.action && item.id === pending.id));
     savePendingWrites();
     cacheAdminData();
+    if (uploadedQrImage) {
+      const keepPath = storagePathFromPublicUrl(uploadedQrImage);
+      if (isSupabaseStorageUrl(previousQrImage) && storagePathFromPublicUrl(previousQrImage) !== keepPath) {
+        removeSupabaseImageByUrl(previousQrImage).catch(cleanupError => {
+          console.warn("No se pudo eliminar el QR anterior", cleanupError);
+        });
+      }
+      cleanupBankUploads(keepPath).catch(cleanupError => {
+        console.warn("No se pudieron limpiar QR antiguos", cleanupError);
+      });
+    }
     toast("Configuración de banco y domicilios guardada en Supabase.");
   } catch (error) {
     console.warn("No se pudo sincronizar banco", error);
@@ -3222,8 +3239,21 @@ async function deleteProduct(productId) {
     danger: true
   });
   if (!confirmed) return;
+  const product = state.products.find(item => item.producto_id === productId);
+  const imagePath = storagePathFromPublicUrl(product?.imagen);
   state.products = state.products.filter(product => product.producto_id !== productId);
-  await persistAndRender("deleteProduct", { producto_id: productId, hardDelete: true }, "Producto eliminado.");
+  await persistAndRender("deleteProduct", { producto_id: productId, hardDelete: true }, "Producto eliminado.", {
+    onSynced: () => {
+      if (imagePath) {
+        removeSupabaseImage(imagePath).catch(error => {
+          console.warn("No se pudo eliminar la imagen del producto borrado", error);
+        });
+      }
+      cleanupProductUploads(productId, "").catch(error => {
+        console.warn("No se pudieron limpiar imagenes del producto borrado", error);
+      });
+    }
+  });
 }
 
 async function deleteExtra(extraId) {
@@ -3234,8 +3264,21 @@ async function deleteExtra(extraId) {
     danger: true
   });
   if (!confirmed) return;
+  const extra = state.extras.find(item => item.extra_id === extraId);
+  const imagePath = storagePathFromPublicUrl(extra?.imagen);
   state.extras = state.extras.filter(extra => extra.extra_id !== extraId);
-  await persistAndRender("deleteExtra", { extra_id: extraId, hardDelete: true }, "Extra eliminado.");
+  await persistAndRender("deleteExtra", { extra_id: extraId, hardDelete: true }, "Extra eliminado.", {
+    onSynced: () => {
+      if (imagePath) {
+        removeSupabaseImage(imagePath).catch(error => {
+          console.warn("No se pudo eliminar la imagen del extra borrado", error);
+        });
+      }
+      cleanupExtraUploads(extraId, "").catch(error => {
+        console.warn("No se pudieron limpiar imagenes del extra borrado", error);
+      });
+    }
+  });
 }
 
 async function deleteInventoryItem(itemId) {
@@ -3275,7 +3318,7 @@ async function cycleOrderStatus(orderId) {
   await persistAndRender("updateOrderStatus", { order_id: orderId, estado: nextStatus }, "Estado actualizado.");
 }
 
-async function persistAndRender(action, data, successMessage) {
+async function persistAndRender(action, data, successMessage, options = {}) {
   const savingOverlay = showSectionSaving(action, data);
   queuePendingWrite(action, data);
   cacheAdminData();
@@ -3289,6 +3332,7 @@ async function persistAndRender(action, data, successMessage) {
     .then(() => {
       state.pendingWrites = state.pendingWrites.filter(item => !(item.action === action && item.id === pendingIdFor(action, data)));
       savePendingWrites();
+      if (typeof options.onSynced === "function") options.onSynced();
       scheduleBackgroundRefresh();
     })
     .catch(error => {
@@ -3538,7 +3582,8 @@ function normalizeProductsForAdmin(products) {
     opciones: product.opciones || "",
     sabores: normalizeProductFlavors(productFlavorSource(product)),
     orden: moneyToNumber(product.orden) || index + 1,
-    activo: product.activo !== false && String(product.activo).toLowerCase() !== "false"
+    activo: product.activo !== false && String(product.activo).toLowerCase() !== "false",
+    updated_at: product.updated_at || product.updatedAt || ""
   })).sort(sortByOrderThenName);
 }
 
@@ -3547,8 +3592,10 @@ function normalizeExtrasForAdmin(extras) {
     extra_id: extra.extra_id || makeId("extra"),
     nombre: extra.nombre || "Extra Oscar's Parrilla",
     precio: moneyToNumber(extra.precio),
+    imagen: extra.imagen || extra.image || "",
     orden: moneyToNumber(extra.orden) || index + 1,
-    activo: extra.activo !== false && String(extra.activo).toLowerCase() !== "false"
+    activo: extra.activo !== false && String(extra.activo).toLowerCase() !== "false",
+    updated_at: extra.updated_at || extra.updatedAt || ""
   })).sort(sortByOrderThenName);
 }
 
@@ -4176,7 +4223,8 @@ function productVisualImage(product) {
   const beverageImage = getBeverageProductImage(product);
   if (beverageImage && (!image || isPizzaPlaceholderImage(image))) return `./images/${beverageImage}`;
   if (/^pizza([1-8])\.png$/i.test(image)) return `./images/${image}`;
-  if (/^https?:\/\//i.test(image) || image.startsWith("data:")) return image;
+  if (/^https?:\/\//i.test(image)) return versionPublicAssetUrl(image, product?.updated_at);
+  if (image.startsWith("data:")) return image;
   if (image.startsWith("./")) return image;
   if (image.startsWith("images/")) return `./${image}`;
   if (image) return `./images/${image}`;
@@ -4276,7 +4324,7 @@ function normalizeComparable(value) {
   return Object.keys(value)
     .sort()
     .reduce((acc, key) => {
-      if (["updatedAt", "actualizado"].includes(key)) return acc;
+      if (["updatedAt", "updated_at", "actualizado"].includes(key)) return acc;
       acc[key] = normalizeComparable(value[key]);
       return acc;
     }, {});
@@ -4388,17 +4436,41 @@ async function uploadSupabaseImage(file, folder, id) {
   const path = `${folder}/${id}-${Date.now()}.${ext}`;
   const { error } = await client.storage.from(bucket).upload(path, file, {
     upsert: true,
-    cacheControl: "3600"
+    cacheControl: "60"
   });
   if (error) throw error;
-  return client.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+  return versionPublicAssetUrl(client.storage.from(bucket).getPublicUrl(path).data.publicUrl);
 }
 
 function storagePathFromPublicUrl(url) {
   const bucket = (window.OSCARS_SUPABASE || {}).imageBucket || "product-images";
   const marker = `/storage/v1/object/public/${bucket}/`;
-  const index = String(url || "").indexOf(marker);
-  return index >= 0 ? decodeURIComponent(String(url).slice(index + marker.length)) : "";
+  const raw = String(url || "");
+  const index = raw.indexOf(marker);
+  if (index < 0) return "";
+  const pathWithQuery = raw.slice(index + marker.length);
+  return decodeURIComponent(pathWithQuery.split("?")[0].split("#")[0]);
+}
+
+function versionPublicAssetUrl(url, version = Date.now()) {
+  const raw = String(url || "").trim();
+  if (!raw || raw.startsWith("data:") || !/^https?:\/\//i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    parsed.searchParams.set("v", String(version || Date.now()));
+    return parsed.toString();
+  } catch {
+    const separator = raw.includes("?") ? "&" : "?";
+    return `${raw}${separator}v=${encodeURIComponent(String(version || Date.now()))}`;
+  }
+}
+
+function isSupabaseStorageUrl(url) {
+  return Boolean(storagePathFromPublicUrl(url));
+}
+
+function removeSupabaseImageByUrl(url) {
+  return removeSupabaseImage(storagePathFromPublicUrl(url));
 }
 
 async function removeSupabaseImage(path) {
@@ -4410,17 +4482,16 @@ async function removeSupabaseImage(path) {
   if (error) throw error;
 }
 
-async function cleanupCategoryCoverUploads(categoryId, keepPath) {
+async function cleanupStorageUploads(folder, id, keepPath) {
   const config = window.OSCARS_SUPABASE || {};
   const client = window.supabase.createClient(config.url, config.anonKey);
   const bucket = config.imageBucket || "product-images";
-  const folder = "category-covers";
   const { data, error } = await client.storage.from(bucket).list(folder, { limit: 200 });
   if (error || !Array.isArray(data)) {
-    if (error) console.warn("No se pudieron listar portadas antiguas", error);
+    if (error) console.warn("No se pudieron listar imagenes antiguas", error);
     return;
   }
-  const prefix = `${categoryId}-`;
+  const prefix = `${id}-`;
   const stalePaths = data
     .map(item => String(item.name || ""))
     .filter(name => name.startsWith(prefix))
@@ -4428,7 +4499,23 @@ async function cleanupCategoryCoverUploads(categoryId, keepPath) {
     .filter(path => path !== keepPath);
   if (!stalePaths.length) return;
   const { error: removeError } = await client.storage.from(bucket).remove(stalePaths);
-  if (removeError) console.warn("No se pudieron limpiar portadas antiguas", removeError);
+  if (removeError) console.warn("No se pudieron limpiar imagenes antiguas", removeError);
+}
+
+async function cleanupCategoryCoverUploads(categoryId, keepPath) {
+  return cleanupStorageUploads("category-covers", categoryId, keepPath);
+}
+
+async function cleanupProductUploads(productId, keepPath) {
+  return cleanupStorageUploads("products", productId, keepPath);
+}
+
+async function cleanupExtraUploads(extraId, keepPath) {
+  return cleanupStorageUploads("extras", extraId, keepPath);
+}
+
+async function cleanupBankUploads(keepPath) {
+  return cleanupStorageUploads("bank", "qr-pago", keepPath);
 }
 
 function formatFileSize(bytes = 0) {
@@ -4442,11 +4529,17 @@ async function saveProduct(event) {
   const data = getFormObject(el.productForm);
   const editing = Boolean(data.producto_id);
   const productId = data.producto_id || makeId("prod");
+  const previousProduct = state.products.find(product => product.producto_id === productId);
+  const previousImage = previousProduct?.imagen || "";
   let image = data.imagen || suggestedProductImage();
+  let uploadedPath = "";
 
   try {
     const uploaded = await uploadSupabaseImage(el.productForm.elements.image_file?.files?.[0], "products", productId);
-    if (uploaded) image = uploaded;
+    if (uploaded) {
+      image = uploaded;
+      uploadedPath = storagePathFromPublicUrl(uploaded);
+    }
   } catch (error) {
     toast(`No se pudo subir la imagen: ${error.message}`);
     return;
@@ -4462,22 +4555,43 @@ async function saveProduct(event) {
     opciones: parseFriendlyOptions(data.opciones),
     sabores: parseFriendlyFlavors(data.sabores),
     orden: moneyToNumber(data.orden),
-    activo: data.activo === "true"
+    activo: data.activo === "true",
+    updated_at: new Date().toISOString()
   };
   upsertLocal("products", "producto_id", product);
   collapseForm(el.productForm);
-  await persistAndRender("upsertProduct", { product }, editing ? "Producto actualizado." : "Producto agregado.");
+  if (el.productForm.elements.image_file) el.productForm.elements.image_file.value = "";
+  await persistAndRender("upsertProduct", { product }, editing ? "Producto actualizado." : "Producto agregado.", {
+    onSynced: () => {
+      if (!uploadedPath) return;
+      const previousPath = storagePathFromPublicUrl(previousImage);
+      if (previousPath && previousPath !== uploadedPath) {
+        removeSupabaseImage(previousPath).catch(error => {
+          console.warn("No se pudo eliminar la imagen anterior del producto", error);
+        });
+      }
+      cleanupProductUploads(productId, uploadedPath).catch(error => {
+        console.warn("No se pudieron limpiar imagenes antiguas del producto", error);
+      });
+    }
+  });
 }
 
 async function saveExtra(event) {
   event.preventDefault();
   const data = getFormObject(el.extraForm);
   const extraId = data.extra_id || makeId("extra");
+  const previousExtra = state.extras.find(extra => extra.extra_id === extraId);
+  const previousImage = previousExtra?.imagen || "";
   let image = data.imagen || "";
+  let uploadedPath = "";
 
   try {
     const uploaded = await uploadSupabaseImage(el.extraForm.elements.image_file?.files?.[0], "extras", extraId);
-    if (uploaded) image = uploaded;
+    if (uploaded) {
+      image = uploaded;
+      uploadedPath = storagePathFromPublicUrl(uploaded);
+    }
   } catch (error) {
     toast(`No se pudo subir la imagen: ${error.message}`);
     return;
@@ -4489,10 +4603,25 @@ async function saveExtra(event) {
     precio: moneyToNumber(data.precio),
     imagen: image,
     orden: moneyToNumber(data.orden),
-    activo: data.activo === "true"
+    activo: data.activo === "true",
+    updated_at: new Date().toISOString()
   };
   upsertLocal("extras", "extra_id", extra);
   collapseForm(el.extraForm);
-  await persistAndRender("upsertExtra", { extra }, "Extra guardado.");
+  if (el.extraForm.elements.image_file) el.extraForm.elements.image_file.value = "";
+  await persistAndRender("upsertExtra", { extra }, "Extra guardado.", {
+    onSynced: () => {
+      if (!uploadedPath) return;
+      const previousPath = storagePathFromPublicUrl(previousImage);
+      if (previousPath && previousPath !== uploadedPath) {
+        removeSupabaseImage(previousPath).catch(error => {
+          console.warn("No se pudo eliminar la imagen anterior del extra", error);
+        });
+      }
+      cleanupExtraUploads(extraId, uploadedPath).catch(error => {
+        console.warn("No se pudieron limpiar imagenes antiguas del extra", error);
+      });
+    }
+  });
 }
 

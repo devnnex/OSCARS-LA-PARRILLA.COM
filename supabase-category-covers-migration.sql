@@ -120,11 +120,7 @@ select
   initcap(replace(category_id, '-', ' ')),
   updated_at
 from latest_covers
-on conflict (category_id) do update set
-  image_url = excluded.image_url,
-  storage_path = excluded.storage_path,
-  alt_text = excluded.alt_text,
-  updated_at = excluded.updated_at;
+on conflict (category_id) do nothing;
 
 with covers_json as (
   select coalesce(jsonb_agg(jsonb_build_object(

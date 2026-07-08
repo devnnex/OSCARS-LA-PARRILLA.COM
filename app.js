@@ -48,7 +48,7 @@ const MAX_QTY = 999999;
 const MENU_FETCH_TIMEOUT_MS = 3800;
 const MENU_SYNC_INTERVAL_MS = 5000;
 const ORDER_RECORD_FAST_TIMEOUT_MS = 1400;
-const MENU_CACHE_KEY = "chanchos_menu_cache_v4";
+const MENU_CACHE_KEY = "chanchos_menu_cache_v5";
 const MENU_PENDING_KEY = "chanchos_menu_pending_v1";
 const EMAIL_AUTOFILL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 const STATIC_PRODUCT_IMAGES = [
@@ -239,6 +239,7 @@ const state = {
   menuFingerprint: "",
   menuSyncInProgress: false,
   menuPollTimer: null,
+  updatedAt: "",
   categoryNoticeTimer: null
 };
 
@@ -694,14 +695,17 @@ function prepareFrontendMenu(menu) {
     extras,
     operationConfig: normalizeOperationConfig({
       ...(menu.operationConfig || menu.operation_config || menu.settings || {}),
-      categoryCovers: (menu.operationConfig || menu.operation_config || menu.settings || {}).categoryCovers
-        || (menu.operationConfig || menu.operation_config || menu.settings || {}).category_covers
-        || menu.categoryCovers
-        || menu.category_covers
-        || []
+      categoryCovers: menuCategoryCovers(menu)
     }),
-    updatedAt: menu.updatedAt || new Date().toISOString()
+    updatedAt: menu.updatedAt || menu.updated_at || new Date().toISOString()
   };
+}
+
+function menuCategoryCovers(menu = {}) {
+  const settings = menu.operationConfig || menu.operation_config || menu.settings || {};
+  const tableCovers = menu.categoryCovers || menu.category_covers;
+  if (Array.isArray(tableCovers) && tableCovers.length) return tableCovers;
+  return settings.categoryCovers || settings.category_covers || [];
 }
 
 function normalizeStorefrontCategory(categoryId) {
@@ -726,13 +730,10 @@ function applyMenu(menu, options = {}) {
   state.menuFingerprint = fingerprint;
   state.products = normalizeProducts(menu.products || menu.productos || []);
   state.extras = normalizeExtras(menu.extras || []);
+  state.updatedAt = menu.updatedAt || menu.updated_at || new Date().toISOString();
   state.operationConfig = normalizeOperationConfig({
     ...(menu.operationConfig || menu.operation_config || menu.settings || {}),
-    categoryCovers: (menu.operationConfig || menu.operation_config || menu.settings || {}).categoryCovers
-      || (menu.operationConfig || menu.operation_config || menu.settings || {}).category_covers
-      || menu.categoryCovers
-      || menu.category_covers
-      || []
+    categoryCovers: menuCategoryCovers(menu)
   });
   applyPendingMenuWrites();
   state.categories = buildCategories(state.products);
@@ -836,7 +837,7 @@ function hideCategoryNotice() {
 
 function categoryCoverImage(category) {
   const cover = (state.operationConfig?.categoryCovers || []).find(item => item.category_id === category.id);
-  if (cover?.image_url) return cover.image_url;
+  if (cover?.image_url) return versionImageUrl(cover.image_url, cover.updated_at);
   const product = getAvailableProducts().find(item => item.categoria_id === category.id && item.imagen);
   return product ? resolveProductImage(product) : categoryFallbackImage(category.id);
 }
@@ -1566,7 +1567,7 @@ function renderTransferInfo(paymentId, method) {
     el.transferInfo.innerHTML = "";
     return;
   }
-  const qr = state.operationConfig?.qrImage || "";
+  const qr = versionImageUrl(state.operationConfig?.qrImage || "", state.updatedAt);
   const transferList = transferMethods();
   el.transferInfo.innerHTML = `
     <div class="transfer-head">
@@ -2436,7 +2437,8 @@ function normalizeProduct(product) {
     opciones: normalizeProductOptions(product.opciones ?? product.options ?? product.sizes),
     sabores: normalizeProductFlavors(productFlavorSource(product)),
     orden: moneyToNumber(product.orden),
-    activo: toBool(product.activo)
+    activo: toBool(product.activo),
+    updated_at: product.updated_at || product.updatedAt || ""
   };
 }
 
@@ -2552,8 +2554,10 @@ function normalizeExtra(extra) {
     extra_id: String(extra.extra_id || extra.id || makeId("extra")).trim(),
     nombre: String(extra.nombre || extra.name || "").trim(),
     precio: moneyToNumber(extra.precio ?? extra.price),
+    imagen: String(extra.imagen || extra.image || "").trim(),
     orden: moneyToNumber(extra.orden),
-    activo: toBool(extra.activo)
+    activo: toBool(extra.activo),
+    updated_at: extra.updated_at || extra.updatedAt || ""
   };
 }
 
@@ -2580,7 +2584,7 @@ function resolveProductImage(product) {
   const explicit = resolveImagePath(product.imagen);
   const smartImage = getSmartProductImage(product);
   if (smartImage && (!explicit || isPizzaPlaceholderImage(explicit))) return resolveImagePath(smartImage);
-  if (explicit) return explicit;
+  if (explicit) return versionImageUrl(explicit, product.updated_at);
 
   const known = getKnownProductImage(product);
   const knownImage = known ? resolveImagePath(known) : "";
@@ -2649,6 +2653,22 @@ function resolveImagePath(value) {
   if (/^https?:\/\//i.test(image) || image.startsWith("data:")) return image;
   if (image.startsWith("./") || image.startsWith("images/")) return image;
   return `./images/${image}`;
+}
+
+function versionImageUrl(url, version) {
+  const raw = String(url || "").trim();
+  if (!raw || raw.startsWith("data:") || !/^https?:\/\//i.test(raw)) return raw;
+  if (!version && /[?&]v=/.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (version || !parsed.searchParams.has("v")) {
+      parsed.searchParams.set("v", String(version || Date.now()));
+    }
+    return parsed.toString();
+  } catch {
+    const separator = raw.includes("?") ? "&" : "?";
+    return `${raw}${separator}v=${encodeURIComponent(String(version || Date.now()))}`;
+  }
 }
 
 function getKnownProductImage(product) {
@@ -3093,7 +3113,7 @@ function normalizeComparable(value) {
   return Object.keys(value)
     .sort()
     .reduce((acc, key) => {
-      if (["updatedAt", "actualizado"].includes(key)) return acc;
+      if (["updatedAt", "updated_at", "actualizado"].includes(key)) return acc;
       acc[key] = normalizeComparable(value[key]);
       return acc;
     }, {});
