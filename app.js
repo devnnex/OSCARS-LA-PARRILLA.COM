@@ -47,6 +47,7 @@ DEFAULT_OPERATION_CONFIG.deliveryZones = defaultDeliveryZones();
 const MAX_QTY = 999999;
 const MENU_FETCH_TIMEOUT_MS = 3800;
 const MENU_SYNC_INTERVAL_MS = 5000;
+const ORDER_RECORD_FAST_TIMEOUT_MS = 1400;
 const MENU_CACHE_KEY = "chanchos_menu_cache_v4";
 const MENU_PENDING_KEY = "chanchos_menu_pending_v1";
 const EMAIL_AUTOFILL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
@@ -1455,16 +1456,19 @@ function cashMethods() {
 }
 
 function renderPaymentOptions(method, currentValue) {
-  const allowed = method === "domicilio"
+  const allowedMethods = method === "domicilio"
     ? transferMethods()
     : [...cashMethods(), ...transferMethods()];
-  const options = allowed.length ? allowed : DEFAULT_OPERATION_CONFIG.paymentMethods;
+  const fallbackMethods = method === "domicilio"
+    ? DEFAULT_OPERATION_CONFIG.paymentMethods.filter(item => normalizeComparable(item.tipo) !== "efectivo")
+    : DEFAULT_OPERATION_CONFIG.paymentMethods;
+  const options = allowedMethods.length ? allowedMethods : fallbackMethods;
   el.paymentMethod.innerHTML = `<option value="" disabled>Selecciona una opción</option>${options.map(item => `
     <option value="${escapeAttr(item.method_id)}">${escapeHtml(item.nombre)}</option>
   `).join("")}`;
   const nextValue = options.some(item => item.method_id === currentValue)
     ? currentValue
-    : (method === "domicilio" ? options[0]?.method_id || "" : "");
+    : options[0]?.method_id || "";
   el.paymentMethod.value = nextValue;
 }
 
@@ -1707,48 +1711,62 @@ async function submitCheckout(event) {
     return;
   }
 
-  const deliveryText = method === "recoger"
-    ? "Sin costo (recoge en el local)"
-    : (quote.zone ? `${formatMoney(quote.delivery)} (${quote.zone.nombre})` : "Por confirmar por WhatsApp");
-  const lines = [
-    "\uD83E\uDDFE *Resumen de la orden*",
-    "",
-    "\uD83D\uDC64 *Datos del cliente*",
-    `Nombre: ${name}`,
-    `Teléfono: ${phone}`,
-    "",
-    "\uD83D\uDCCD *Entrega*",
-    `Modalidad: ${method === "domicilio" ? "Domicilio" : "Recoger en el local"}`,
-    ...(method === "domicilio" ? [`Dirección: ${address}`] : ["Sede para recoger: Por confirmar"]),
-    `Forma de pago: ${selectedPayment?.nombre || formatBudgetLabel(payment)}`,
-    "",
-    "\uD83C\uDF55 *Pedido*"
-  ];
+  const order = buildCheckoutOrder({ name, phone, method, address, selectedPayment, payment, notes, quote });
+  const lines = buildWhatsAppOrderLines(order, quote, selectedPayment);
+  const quoteUrl = `https://wa.me/${BUSINESS_PHONE}?text=${encodeURIComponent(lines.join("\n"))}`;
+  const whatsappWindow = window.open("about:blank", "_blank");
+  if (whatsappWindow) whatsappWindow.opener = null;
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
 
-  state.cart.forEach(item => {
-    const qty = clampQuantity(item.qty);
-    const optionText = item.option_label ? ` (${item.option_label})` : "";
-    lines.push(`- ${qty} x ${item.title}${optionText} - ${formatMoney(moneyToBigInt(item.price) * qtyToBigInt(qty))}`);
-    if (item.flavor_label) lines.push(`  Sabor: ${item.flavor_label}`);
-    if ((item.extras || []).length) {
-      item.extras.forEach(extra => {
-        const extraQty = clampQuantity(extra.qty);
-        lines.push(`  + ${extraQty} x ${extra.nombre} - ${formatMoney(moneyToBigInt(extra.precio) * qtyToBigInt(extraQty))}`);
-      });
-    }
-  });
+  const recordPromise = recordOrder(order);
+  const recordedFast = await Promise.race([
+    recordPromise,
+    wait(ORDER_RECORD_FAST_TIMEOUT_MS).then(() => false)
+  ]);
+  if (!recordedFast) recordPromise.catch(() => {});
 
-  lines.push("");
-  lines.push("\uD83D\uDCB0 *Totales*");
-  lines.push(`Productos: ${formatMoney(quote.subtotal)}`);
-  lines.push(`Empaque para llevar: ${formatMoney(quote.packaging)} (${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())})`);
-  lines.push(`Domicilio: ${deliveryText}`);
-  lines.push(`Total a pagar: ${formatMoney(quote.total)}`);
-  lines.push("");
-  lines.push("\uD83D\uDCDD *Notas*");
-  lines.push(`Notas: ${notes}`);
+  if (whatsappWindow) {
+    whatsappWindow.location.href = quoteUrl;
+  } else {
+    window.location.href = quoteUrl;
+  }
 
-  const order = {
+  state.cart = [];
+  renderCart();
+  closeCheckout();
+  if (submitButton) submitButton.disabled = false;
+}
+
+async function recordOrder(order) {
+  if (!API_URL.trim()) return false;
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), ORDER_RECORD_FAST_TIMEOUT_MS + 2600);
+  try {
+    const response = await fetch(API_URL.trim(), {
+      method: "POST",
+      keepalive: true,
+      signal: controller.signal,
+      body: JSON.stringify({
+        action: "createOrder",
+        order
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    return true;
+  } catch (error) {
+    console.warn("No se pudo registrar el pedido en la API", error);
+    toast("El pedido se enviará por WhatsApp. Si no aparece en admin, revisa la sincronización.");
+    return false;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function buildCheckoutOrder({ name, phone, method, address, selectedPayment, payment, notes, quote }) {
+  return {
     cliente: name,
     telefono: phone,
     metodo: method,
@@ -1760,44 +1778,77 @@ async function submitCheckout(event) {
     empaque: Number(quote.packaging),
     barrio: quote.zone?.nombre || "",
     total: Number(quote.total),
-    items: state.cart.map(item => ({
-      producto_id: item.product_id,
-      nombre: item.title,
-      opcion: item.option_label || "",
-      sabor: item.flavor_label || "",
-      precio: Number(item.price || 0),
-      cantidad: clampQuantity(item.qty),
-      extras: item.extras || []
-    }))
+    items: state.cart.map(normalizeCartItemForOrder)
   };
-
-  const quoteUrl = `https://wa.me/${BUSINESS_PHONE}?text=${encodeURIComponent(lines.join("\n"))}`;
-  void recordOrder(order);
-  window.open(quoteUrl, "_blank", "noopener,noreferrer");
-
-  state.cart = [];
-  renderCart();
-  closeCheckout();
 }
 
-async function recordOrder(order) {
-  if (!API_URL.trim()) return;
+function normalizeCartItemForOrder(item) {
+  return {
+    producto_id: item.product_id,
+    nombre: item.title,
+    opcion: item.option_label || "",
+    sabor: item.flavor_label || "",
+    precio: Number(item.price || 0),
+    cantidad: clampQuantity(item.qty),
+    extras: (item.extras || []).map(extra => ({
+      extra_id: extra.extra_id || "",
+      nombre: extra.nombre || "",
+      precio: Number(extra.precio || 0),
+      cantidad: clampQuantity(extra.qty)
+    }))
+  };
+}
 
-  try {
-    const response = await fetch(API_URL.trim(), {
-      method: "POST",
-      keepalive: true,
-      body: JSON.stringify({
-        action: "createOrder",
-        order
-      })
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-  } catch (error) {
-    console.warn("No se pudo registrar el pedido en la API", error);
-    toast("El pedido se enviará por WhatsApp. Si no aparece en admin, revisa la sincronización.");
+function buildWhatsAppOrderLines(order, quote, selectedPayment) {
+  const deliveryText = order.metodo === "recoger"
+    ? "Sin costo (recoge en el local)"
+    : (quote.zone ? `${formatMoney(quote.delivery)} (${quote.zone.nombre})` : "Por confirmar por WhatsApp");
+  const lines = [
+    "*Nueva orden - Oscar's Parrilla*",
+    "",
+    "*Cliente*",
+    `Nombre: ${order.cliente}`,
+    `Telefono: ${order.telefono}`,
+    "",
+    "*Entrega*",
+    `Modalidad: ${order.metodo === "domicilio" ? "Domicilio" : "Recoger en el local"}`,
+    ...(order.metodo === "domicilio" ? [`Direccion: ${order.direccion}`] : ["Sede para recoger: Por confirmar"]),
+    ...(order.barrio ? [`Barrio/Zona: ${order.barrio}`] : []),
+    `Pago: ${order.pago}`,
+    ...(selectedPayment?.detalle ? [`Dato de pago: ${selectedPayment.detalle}`] : []),
+    "",
+    "*Productos*"
+  ];
+
+  order.items.forEach((item, index) => {
+    const itemTotal = moneyToBigInt(item.precio) * qtyToBigInt(item.cantidad);
+    const optionText = item.opcion ? ` (${item.opcion})` : "";
+    lines.push(`${index + 1}. ${item.cantidad} x ${item.nombre}${optionText} - ${formatMoney(itemTotal)}`);
+    if (item.sabor) lines.push(`   Sabor: ${item.sabor}`);
+    if (item.extras?.length) {
+      item.extras.forEach(extra => {
+        const extraTotal = moneyToBigInt(extra.precio) * qtyToBigInt(extra.cantidad);
+        lines.push(`   + ${extra.cantidad} x ${extra.nombre} - ${formatMoney(extraTotal)}`);
+      });
+    }
+  });
+
+  lines.push("");
+  lines.push("*Totales*");
+  lines.push(`Productos: ${formatMoney(quote.subtotal)}`);
+  lines.push(`Empaque: ${formatMoney(quote.packaging)} (${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())})`);
+  lines.push(`Domicilio: ${deliveryText}`);
+  lines.push(`Total: ${formatMoney(quote.total)}`);
+  if (order.notas) {
+    lines.push("");
+    lines.push("*Notas*");
+    lines.push(order.notas);
   }
+  return lines;
+}
+
+function wait(ms) {
+  return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
 function formatBudgetLabel(value) {

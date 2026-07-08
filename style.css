@@ -1010,12 +1010,14 @@ select:focus {
 
 .transfer-qr-card {
   width: min(172px, 38vw);
+  min-width: 132px;
   display: grid;
   gap: 8px;
 }
 
 .transfer-qr-empty {
   width: min(172px, 38vw);
+  min-width: 132px;
   min-height: 112px;
   display: grid;
   place-items: center;
@@ -1029,6 +1031,7 @@ select:focus {
 
 .transfer-qr-card img {
   width: 100%;
+  min-width: 0;
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 14px;
@@ -1128,12 +1131,14 @@ select:focus {
   }
 
   .transfer-qr-card {
-    width: min(240px, 100%);
+    width: min(260px, 100%);
+    min-width: min(220px, 100%);
     justify-self: center;
   }
 
   .transfer-qr-empty {
-    width: min(240px, 100%);
+    width: min(260px, 100%);
+    min-width: min(220px, 100%);
     justify-self: center;
   }
 

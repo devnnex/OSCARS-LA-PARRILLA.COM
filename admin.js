@@ -2,7 +2,7 @@
 const ADMIN_CACHE_KEY = "chanchos_admin_cache_v3";
 const ADMIN_PENDING_KEY = "chanchos_admin_pending_v1";
 const API_TIMEOUT_MS = 18000;
-const API_REALTIME_POLL_MS = 1000;
+const API_REALTIME_POLL_MS = 650;
 const ADMIN_PAGE_TITLE = document.title;
 const MENU_CATEGORY_ORDER = [
   "bebidas",
@@ -490,8 +490,12 @@ function bindEvents() {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && state.token) {
       flushPendingWrites();
+      loadOrdersRealtime();
       loadAdminData({ silent: true, fresh: true });
     }
+  });
+  window.addEventListener("focus", () => {
+    if (state.token) loadOrdersRealtime();
   });
   window.addEventListener("online", flushPendingWrites);
   window.setInterval(flushPendingWrites, 15000);
