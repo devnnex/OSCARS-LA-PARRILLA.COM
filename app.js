@@ -46,35 +46,15 @@ function splitZoneNames(value = "") {
 DEFAULT_OPERATION_CONFIG.deliveryZones = defaultDeliveryZones();
 const MAX_QTY = 999999;
 const MENU_FETCH_TIMEOUT_MS = 3800;
-const MENU_SYNC_INTERVAL_MS = 5000;
+const MENU_SYNC_INTERVAL_MS = 2500;
 const ORDER_RECORD_FAST_TIMEOUT_MS = 1400;
 const MENU_CACHE_KEY = "chanchos_menu_cache_v5";
 const MENU_PENDING_KEY = "chanchos_menu_pending_v1";
+const SHARED_MENU_CHANGE_KEY = "oscars_menu_change_event_v1";
+const CLIENT_SYNC_SOURCE_ID = `index-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const SHARED_MENU_ACTIONS = new Set(["upsertProduct", "deleteProduct", "upsertExtra", "deleteExtra", "upsertOperationConfig"]);
 const EMAIL_AUTOFILL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
-const STATIC_PRODUCT_IMAGES = [
-  "andina-cerveza.png",
-  "botella-de-agua.png",
-  "club-colombia-dorada.png",
-  "coronita-cerveza.png",
-  "gaseosa-pet-400ml.png",
-  "gaseosa1.5L.png",
-  "gaseosa350ml.png",
-  "granizado-de-mandarina.png",
-  "granizado-de-mango.png",
-  "granizado-en-agua.png",
-  "granizado-en-leche.png",
-  "granizado-frutos-amarillos.png",
-  "granizado-frutos-rojos.png",
-  "light-cerveza.png",
-  "limonada-de-cereza.png",
-  "limonada-de-coco.png",
-  "limonada-de-pepino.png",
-  "limonada-de-uva.png",
-  "limonada-en-soda.png",
-  "limonada-hierba-buena.png",
-  "pilsen-cerveza.png",
-  "poker-cerveza.png"
-];
+const STATIC_PRODUCT_IMAGES = [];
 
 const KNOWN_PRODUCT_IMAGES_BY_ID = {};
 
@@ -179,7 +159,7 @@ const demoMenu = {
       nombre: "Hamburguesa Parrillera",
       precio: 32000,
       descripcion: "Hamburguesa a la parrilla con salsa de la casa y sabor ahumado.",
-      imagen: "pizza1.png",
+      imagen: "",
       orden: 1,
       activo: true
     },
@@ -189,7 +169,7 @@ const demoMenu = {
       nombre: "Hamburguesa BBQ",
       precio: 30000,
       descripcion: "Carne a la parrilla, salsa BBQ, queso fundido y vegetales frescos.",
-      imagen: "pizza2.png",
+      imagen: "",
       orden: 2,
       activo: true
     },
@@ -199,7 +179,7 @@ const demoMenu = {
       nombre: "Oscar's Parrilla Especial",
       precio: 42000,
       descripcion: "Combinación de carnes, vegetales frescos y salsa especial de la casa.",
-      imagen: "pizza8.png",
+      imagen: "",
       orden: 3,
       activo: true
     },
@@ -209,7 +189,7 @@ const demoMenu = {
       nombre: "Combo Hamburguesa y Bebida",
       precio: 56000,
       descripcion: "Hamburguesa, bebida y entrada para compartir.",
-      imagen: "pizza9.png",
+      imagen: "",
       orden: 4,
       activo: true
     }
@@ -238,6 +218,7 @@ const state = {
   pendingMenuWrites: readPendingMenuWrites(),
   menuFingerprint: "",
   menuSyncInProgress: false,
+  menuRefreshQueued: false,
   menuPollTimer: null,
   updatedAt: "",
   categoryNoticeTimer: null
@@ -342,7 +323,7 @@ async function init() {
   bindEvents();
   bindAdminMoneyInputs();
   disableSearchAutofill();
-  applyCachedMenu();
+  clearCachedMenu();
   renderAll();
   await loadMenu({ background: true });
   startMenuRealtimeSync();
@@ -480,15 +461,18 @@ function bindCategoryWheelScroll() {
 }
 
 async function loadMenu(options = {}) {
-  if (state.menuSyncInProgress && options.background) return;
+  if (state.menuSyncInProgress) {
+    state.menuRefreshQueued = true;
+    return;
+  }
   state.menuSyncInProgress = true;
-  const hasMenu = state.products.length || readCachedMenu();
+  const hasMenu = state.products.length;
   if (!options.background || !hasMenu) setSync("Sincronizando");
   const configuredUrl = API_URL.trim();
 
   if (!configuredUrl) {
-    applyMenu(readCachedMenu() || demoMenu);
-    setSync("Modo demo");
+    applyMenu(emptyRemoteMenu(), { force: true });
+    setSync("Sin conexión");
     state.menuSyncInProgress = false;
     return;
   }
@@ -507,28 +491,25 @@ async function loadMenu(options = {}) {
     if (!payload.ok) throw new Error(payload.error || "Respuesta inválida");
 
     const remoteMenu = prepareFrontendMenu(payload.data || payload);
-    cacheMenu(remoteMenu);
     applyMenu(remoteMenu, { force: options.force });
     setSync("Carta actualizada");
   } catch (error) {
     console.error(error);
-    const cachedMenu = readCachedMenu();
-    if (cachedMenu) {
-      applyMenu(cachedMenu);
-      setSync("Carta en cache");
-      return;
-    }
-
-    applyMenu(demoMenu);
-    setSync("Modo respaldo");
-    toast("No se pudo sincronizar la carta. Se cargo una version de respaldo.");
+    applyMenu(emptyRemoteMenu(), { force: true });
+    setSync("Sin sincronizar");
+    toast("No se pudo sincronizar la carta desde Supabase.");
   } finally {
     state.menuSyncInProgress = false;
     window.clearTimeout(timeoutId);
+    if (state.menuRefreshQueued) {
+      state.menuRefreshQueued = false;
+      window.setTimeout(() => loadMenu({ background: true, force: true }), 120);
+    }
   }
 }
 
 function startMenuRealtimeSync() {
+  bindSharedMenuChangeListener();
   window.clearInterval(state.menuPollTimer);
   state.menuPollTimer = window.setInterval(() => {
     loadMenu({ background: true });
@@ -541,30 +522,135 @@ function startMenuRealtimeSync() {
   window.addEventListener("online", () => loadMenu({ background: true, force: true }));
 }
 
-function applyCachedMenu() {
-  const cachedMenu = readCachedMenu();
-  if (cachedMenu) {
-    applyMenu(cachedMenu, { force: true });
-    setSync("Carta en cache");
+function bindSharedMenuChangeListener() {
+  if (bindSharedMenuChangeListener.bound) return;
+  bindSharedMenuChangeListener.bound = true;
+
+  window.addEventListener("storage", event => {
+    if (event.key !== SHARED_MENU_CHANGE_KEY || !event.newValue) return;
+    try {
+      handleSharedMenuChange(JSON.parse(event.newValue));
+    } catch (error) {
+      console.warn("No se pudo leer aviso de actualizacion de carta", error);
+    }
+  });
+
+  if ("BroadcastChannel" in window) {
+    const channel = new BroadcastChannel(SHARED_MENU_CHANGE_KEY);
+    channel.addEventListener("message", event => handleSharedMenuChange(event.data));
+    bindSharedMenuChangeListener.channel = channel;
   }
+}
+
+function announceSharedMenuChange(action, data = {}) {
+  if (!isSharedMenuAction(action)) return;
+  const message = {
+    source: "index",
+    origin: CLIENT_SYNC_SOURCE_ID,
+    action,
+    id: data.product?.producto_id || data.producto_id || data.extra?.extra_id || data.extra_id || action,
+    payload: sharedMenuPayload(action, data),
+    at: Date.now()
+  };
+
+  try {
+    localStorage.setItem(SHARED_MENU_CHANGE_KEY, JSON.stringify(message));
+  } catch (error) {
+    console.warn("No se pudo publicar cambio de carta", error);
+  }
+  bindSharedMenuChangeListener.channel?.postMessage(message);
+}
+
+function handleSharedMenuChange(message = {}) {
+  if (message.origin === CLIENT_SYNC_SOURCE_ID) return;
+  if (!isSharedMenuAction(message.action)) return;
+  if (Date.now() - moneyToNumber(message.at) > 20000) return;
+  const applied = applySharedMenuChange(message);
+  requestMenuRefreshSoon(applied ? 350 : 120);
+}
+
+function requestMenuRefreshSoon(delay = 250) {
+  window.clearTimeout(requestMenuRefreshSoon.timer);
+  requestMenuRefreshSoon.timer = window.setTimeout(() => {
+    loadMenu({ background: true, force: true });
+  }, delay);
+}
+
+function isSharedMenuAction(action) {
+  return SHARED_MENU_ACTIONS.has(action);
+}
+
+function sharedMenuPayload(action, data = {}) {
+  if (action === "upsertProduct" && data.product) return { product: data.product };
+  if (action === "deleteProduct") return { producto_id: data.producto_id };
+  if (action === "upsertExtra" && data.extra) return { extra: data.extra };
+  if (action === "deleteExtra") return { extra_id: data.extra_id };
+  return {};
+}
+
+function applySharedMenuChange(message = {}) {
+  const payload = message.payload || {};
+  if (message.action === "upsertProduct" && payload.product) {
+    upsertStorefrontProduct(normalizeIncomingStorefrontProduct(normalizeProduct(payload.product)), true);
+    finalizeOptimisticMenuChange();
+    return true;
+  }
+
+  if (message.action === "deleteProduct" && payload.producto_id) {
+    state.products = state.products.filter(product => product.producto_id !== payload.producto_id);
+    state.categories = buildCategories(state.products);
+    finalizeOptimisticMenuChange();
+    return true;
+  }
+
+  if (message.action === "upsertExtra" && payload.extra) {
+    upsertStorefrontExtra(normalizeExtra(payload.extra));
+    finalizeOptimisticMenuChange();
+    return true;
+  }
+
+  if (message.action === "deleteExtra" && payload.extra_id) {
+    state.extras = state.extras.filter(extra => extra.extra_id !== payload.extra_id);
+    finalizeOptimisticMenuChange();
+    return true;
+  }
+
+  return false;
+}
+
+function finalizeOptimisticMenuChange() {
+  state.updatedAt = new Date().toISOString();
+  renderAll();
+}
+
+function applyCachedMenu() {
+  clearCachedMenu();
 }
 
 function readCachedMenu() {
-  try {
-    const raw = localStorage.getItem(MENU_CACHE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (error) {
-    console.warn("No se pudo leer cache de carta", error);
-    return null;
-  }
+  clearCachedMenu();
+  return null;
 }
 
 function cacheMenu(menu) {
+  clearCachedMenu();
+}
+
+function clearCachedMenu() {
   try {
-    localStorage.setItem(MENU_CACHE_KEY, JSON.stringify(menu));
+    localStorage.removeItem(MENU_CACHE_KEY);
   } catch (error) {
-    console.warn("No se pudo guardar cache de carta", error);
+    console.warn("No se pudo limpiar cache local de carta", error);
   }
+}
+
+function emptyRemoteMenu() {
+  return {
+    products: [],
+    extras: [],
+    operationConfig: state.operationConfig || DEFAULT_OPERATION_CONFIG,
+    updatedAt: new Date().toISOString()
+  };
 }
 
 function normalizeOperationConfig(config = {}) {
@@ -683,11 +769,7 @@ function applyPendingMenuWrite(pending) {
 }
 
 function prepareFrontendMenu(menu) {
-  const products = normalizeProducts(menu.products || menu.productos || []).map((product, index) => ({
-    ...product,
-    categoria_id: normalizeStorefrontCategory(product.categoria_id),
-    imagen: normalizeStorefrontImage(product, index)
-  }));
+  const products = normalizeProducts(menu.products || menu.productos || []).map(normalizeIncomingStorefrontProduct);
   const extras = normalizeExtras(menu.extras || []);
 
   return {
@@ -698,6 +780,14 @@ function prepareFrontendMenu(menu) {
       categoryCovers: menuCategoryCovers(menu)
     }),
     updatedAt: menu.updatedAt || menu.updated_at || new Date().toISOString()
+  };
+}
+
+function normalizeIncomingStorefrontProduct(product, index = 0) {
+  return {
+    ...product,
+    categoria_id: normalizeStorefrontCategory(product.categoria_id),
+    imagen: normalizeStorefrontImage(product, index)
   };
 }
 
@@ -717,11 +807,7 @@ function normalizeStorefrontCategory(categoryId) {
 function normalizeStorefrontImage(product, index) {
   const explicit = String(product?.imagen || "").trim();
   if (/^https?:\/\//i.test(explicit) || explicit.startsWith("data:")) return explicit;
-  if (explicit.startsWith("./") || explicit.startsWith("images/")) return explicit;
-  if (/^pizza([1-8])\.png$/i.test(explicit)) return explicit;
-  if (/^\.\/images\/pizza([1-8])\.png$/i.test(explicit)) return explicit;
-  if (/^images\/pizza([1-8])\.png$/i.test(explicit)) return explicit;
-  return `pizza${(index % 8) + 1}.png`;
+  return "";
 }
 
 function applyMenu(menu, options = {}) {
@@ -844,7 +930,7 @@ function categoryCoverImage(category) {
 
 function categoryFallbackImage(categoryId) {
   const product = getAvailableProducts().find(item => item.categoria_id === categoryId);
-  return product ? productImageFallback(product) : "./images/logo.png";
+  return "./images/logo.png";
 }
 
 function renderProducts() {
@@ -861,11 +947,10 @@ function renderProducts() {
 
   el.catalog.innerHTML = products.map(product => {
     const image = resolveProductImage(product);
-    const fallbackImage = productImageFallback(product);
     return `
       <article class="product-card">
         <div>
-          ${image ? `<div class="product-visual"><img src="${escapeAttr(image)}" alt="${escapeAttr(product.nombre)}" loading="lazy" onerror="this.onerror=null;this.src='${escapeAttr(fallbackImage)}';"></div>` : productVisualTemplate(product)}
+          ${image ? `<div class="product-visual"><img src="${escapeAttr(image)}" alt="${escapeAttr(product.nombre)}" loading="lazy" onerror="this.onerror=null;this.closest('.product-visual')?.classList.add('image-load-error');this.remove();"></div>` : productVisualTemplate(product)}
           <div class="product-meta">
             <span>${escapeHtml(labelFromId(product.categoria_id))}</span>
             <span class="product-rating">4.9</span>
@@ -904,11 +989,10 @@ function openProductModal(productId, cartIndex = null) {
   }
 
   const image = resolveProductImage({ ...product, imagen: selectedOption?.image || product.imagen, selectedOptionLabel: selectedOption?.label });
-  const fallbackImage = productImageFallback(product);
   let productQty = clampQuantity(cartItem?.qty || 1);
 
   el.modalContent.innerHTML = `
-    ${image ? `<div class="modal-product-visual"><img id="modal-product-image" src="${escapeAttr(image)}" alt="${escapeAttr(product.nombre)}" onerror="this.onerror=null;this.src='${escapeAttr(fallbackImage)}';"></div>` : productVisualTemplate(product, "modal-product-visual")}
+    ${image ? `<div class="modal-product-visual"><img id="modal-product-image" src="${escapeAttr(image)}" alt="${escapeAttr(product.nombre)}" onerror="this.onerror=null;this.closest('.modal-product-visual')?.classList.add('image-load-error');this.remove();"></div>` : productVisualTemplate(product, "modal-product-visual")}
     <div class="modal-title">
       <span class="eyebrow">${escapeHtml(labelFromId(product.categoria_id))}</span>
       <h2>${escapeHtml(product.nombre)}</h2>
@@ -1052,7 +1136,6 @@ function productVisualTemplate(product, className = "product-visual") {
   const label = labelFromId(product.categoria_id).split(" ").slice(0, 2).join(" ");
   return `
     <div class="${className} product-visual-placeholder" aria-hidden="true">
-      <img src="${escapeAttr(productImageFallback(product))}" alt="">
       <span>${escapeHtml(label)}</span>
     </div>
   `;
@@ -2376,6 +2459,7 @@ async function postAdmin(action, data) {
 
     const payload = await response.json();
     if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    announceSharedMenuChange(action, data);
     toast("La carta quedo actualizada correctamente.");
     return true;
   } catch (error) {
@@ -2410,13 +2494,15 @@ function cacheCurrentMenu() {
   cacheMenu({
     products: state.products,
     extras: state.extras,
+    operationConfig: state.operationConfig,
+    categoryCovers: state.operationConfig?.categoryCovers || [],
     updatedAt: new Date().toISOString()
   });
 }
 
 function scheduleMenuRefresh() {
   window.clearTimeout(scheduleMenuRefresh.timer);
-  scheduleMenuRefresh.timer = window.setTimeout(() => loadMenu({ background: true }), 1200);
+  scheduleMenuRefresh.timer = window.setTimeout(() => loadMenu({ background: true, force: true }), 450);
 }
 
 function normalizeProducts(products) {
@@ -2433,7 +2519,7 @@ function normalizeProduct(product) {
     nombre: String(product.nombre || product.title || "").trim(),
     precio: moneyToNumber(product.precio ?? product.price),
     descripcion: String(product.descripcion || product.desc || "").trim(),
-    imagen: String(product.imagen || product.image || "").trim(),
+    imagen: normalizeManagedImageValue(product.imagen || product.image),
     opciones: normalizeProductOptions(product.opciones ?? product.options ?? product.sizes),
     sabores: normalizeProductFlavors(productFlavorSource(product)),
     orden: moneyToNumber(product.orden),
@@ -2554,7 +2640,7 @@ function normalizeExtra(extra) {
     extra_id: String(extra.extra_id || extra.id || makeId("extra")).trim(),
     nombre: String(extra.nombre || extra.name || "").trim(),
     precio: moneyToNumber(extra.precio ?? extra.price),
-    imagen: String(extra.imagen || extra.image || "").trim(),
+    imagen: normalizeManagedImageValue(extra.imagen || extra.image),
     orden: moneyToNumber(extra.orden),
     activo: toBool(extra.activo),
     updated_at: extra.updated_at || extra.updatedAt || ""
@@ -2582,15 +2668,8 @@ function productAllowsExtras(product) {
 
 function resolveProductImage(product) {
   const explicit = resolveImagePath(product.imagen);
-  const smartImage = getSmartProductImage(product);
-  if (smartImage && (!explicit || isPizzaPlaceholderImage(explicit))) return resolveImagePath(smartImage);
   if (explicit) return versionImageUrl(explicit, product.updated_at);
-
-  const known = getKnownProductImage(product);
-  const knownImage = known ? resolveImagePath(known) : "";
-  if (knownImage) return knownImage;
-
-  return productImageFallback(product);
+  return "";
 }
 
 function getSmartProductImage(product) {
@@ -2642,17 +2721,18 @@ function isPizzaPlaceholderImage(value) {
 }
 
 function productImageFallback(product) {
-  const order = moneyToNumber(product?.orden);
-  const index = order > 0 ? ((order - 1) % 8) + 1 : 1;
-  return `./images/pizza${index}.png`;
+  return "";
 }
 
 function resolveImagePath(value) {
+  return normalizeManagedImageValue(value);
+}
+
+function normalizeManagedImageValue(value) {
   const image = String(value || "").trim();
   if (!image) return "";
-  if (/^https?:\/\//i.test(image) || image.startsWith("data:")) return image;
-  if (image.startsWith("./") || image.startsWith("images/")) return image;
-  return `./images/${image}`;
+  if (/^https?:\/\//i.test(image) || image.startsWith("data:image/")) return image;
+  return "";
 }
 
 function versionImageUrl(url, version) {

@@ -3,6 +3,13 @@ const ADMIN_CACHE_KEY = "chanchos_admin_cache_v4";
 const ADMIN_PENDING_KEY = "chanchos_admin_pending_v1";
 const API_TIMEOUT_MS = 18000;
 const API_REALTIME_POLL_MS = 650;
+const ADMIN_SHARED_DATA_POLL_MS = 3500;
+const SHARED_MENU_CHANGE_KEY = "oscars_menu_change_event_v1";
+const ADMIN_SYNC_SOURCE_ID = `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const SHARED_MENU_ACTIONS = new Set(["upsertProduct", "deleteProduct", "upsertExtra", "deleteExtra", "upsertOperationConfig"]);
+const IMAGE_UPLOAD_MAX_DIMENSION = 1280;
+const IMAGE_UPLOAD_TARGET_BYTES = 600 * 1024;
+const IMAGE_UPLOAD_QUALITY = 0.8;
 const ADMIN_PAGE_TITLE = document.title;
 const MENU_CATEGORY_ORDER = [
   "bebidas",
@@ -128,6 +135,8 @@ const state = {
   knownOrderIds: new Set(),
   liveOrdersReady: false,
   pollTimer: null,
+  sharedDataPollTimer: null,
+  sharedDataRefreshQueued: false,
   syncInProgress: false,
   sectionSyncInProgress: "",
   orderSyncInProgress: false,
@@ -265,6 +274,7 @@ document.addEventListener("DOMContentLoaded", init);
 
 function init() {
   bindEvents();
+  bindSharedMenuChangeListener();
   updateSessionUi();
   if (state.token) {
     loadLocalAdminState();
@@ -275,7 +285,10 @@ function init() {
     armSoundUnlock();
     loadActiveSectionData({ silent: true })
       .finally(() => loadAdminData({ silent: true, background: true }))
-      .finally(startOrderPolling);
+      .finally(() => {
+        startOrderPolling();
+        startAdminSharedDataSync();
+      });
   } else {
     showLoginGate();
     setStatus("Inicia sesión para cargar el panel.");
@@ -299,6 +312,7 @@ function bindEvents() {
     unlockSound();
     loadAdminData({ fresh: true });
     startOrderPolling();
+    startAdminSharedDataSync();
   });
 
   el.orderFilter.addEventListener("change", () => {
@@ -632,7 +646,10 @@ async function submitLogin(event) {
     applyCachedAdminData();
     loadActiveSectionData({ silent: true })
       .finally(() => loadAdminData({ silent: true, background: true }))
-      .finally(startOrderPolling);
+      .finally(() => {
+        startOrderPolling();
+        startAdminSharedDataSync();
+      });
     toast(`Bienvenido, ${state.cashierSession.nombre}.`);
   } catch (error) {
     console.warn("Validacion de acceso pendiente", error);
@@ -667,6 +684,7 @@ function logoutAdmin() {
   sessionStorage.removeItem("chanchos_admin_token");
   sessionStorage.removeItem("chanchos_cashier_session");
   window.clearInterval(state.pollTimer);
+  window.clearInterval(state.sharedDataPollTimer);
   updateSessionUi();
   updateLoginMode();
   showLoginGate();
@@ -1241,6 +1259,7 @@ async function saveCategoryCover() {
     renderCategoryCoverModal();
     cacheAdminData();
     await postAdmin("upsertOperationConfig", { operationConfig: state.operationConfig });
+    announceSharedMenuChange("upsertOperationConfig", { operationConfig: state.operationConfig });
     const uploadedPath = storagePathFromPublicUrl(uploaded);
     const previousPath = current?.storage_path || storagePathFromPublicUrl(current?.image_url);
     if (previousPath && previousPath !== uploadedPath) {
@@ -1525,6 +1544,7 @@ async function saveBankConfig() {
     state.pendingWrites = state.pendingWrites.filter(item => !(item.action === pending.action && item.id === pending.id));
     savePendingWrites();
     cacheAdminData();
+    announceSharedMenuChange(pending.action, pending.data);
     if (uploadedQrImage) {
       const keepPath = storagePathFromPublicUrl(uploadedQrImage);
       if (isSupabaseStorageUrl(previousQrImage) && storagePathFromPublicUrl(previousQrImage) !== keepPath) {
@@ -2204,7 +2224,7 @@ function renderProducts() {
       </div>
       ${filteredProducts.map(product => `
         <article class="crud-row product-table-row ${product.activo ? "" : "inactive"}">
-          <img class="admin-product-thumb" src="${escapeAttr(productVisualImage(product))}" alt="" onerror="this.onerror=null;this.src='./images/pizza1.png';">
+          ${adminProductThumbTemplate(product)}
           <div><h3>${escapeHtml(product.nombre)}</h3><p>${escapeHtml(product.descripcion || "Producto de la carta")} | orden ${Number(product.orden || 0)}${product.sabores?.length ? ` | sabores: ${escapeHtml(product.sabores.join(", "))}` : ""}</p></div>
           <span>${escapeHtml(labelFromId(product.categoria_id))}</span>
           <strong>${formatMoney(product.precio)}</strong>
@@ -2413,7 +2433,7 @@ function renderDispatchProducts() {
       precio: extra.precio,
       descripcion: "Extra para la mesa",
       orden: extra.orden,
-      imagen: "pizza8.png"
+      imagen: ""
     }, "extra"))
   ].join("") || `<div class="empty-state">No encontramos productos activos con esa búsqueda.</div>`;
 
@@ -2423,9 +2443,10 @@ function renderDispatchProducts() {
 }
 
 function dispatchProductTemplate(product, type) {
+  const image = productVisualImage(product);
   return `
     <article class="dispatch-card">
-      <img src="${escapeAttr(productVisualImage(product))}" alt="" onerror="this.onerror=null;this.src='./images/pizza1.png';">
+      ${image ? `<img src="${escapeAttr(image)}" alt="" onerror="this.onerror=null;this.classList.add('image-load-error');this.remove();">` : `<span class="dispatch-card-image-placeholder" aria-hidden="true">${escapeHtml(labelFromId(product.categoria_id).slice(0, 2).toUpperCase())}</span>`}
       <div>
         <h3>${escapeHtml(product.nombre)}</h3>
         <p>${escapeHtml(product.descripcion || "Producto listo para mesa")}</p>
@@ -3319,13 +3340,16 @@ async function cycleOrderStatus(orderId) {
 }
 
 async function persistAndRender(action, data, successMessage, options = {}) {
-  const savingOverlay = showSectionSaving(action, data);
+  const savingOverlay = options.savingHandle || showSectionSaving(action, data);
   queuePendingWrite(action, data);
   cacheAdminData();
   renderAll();
   toast(successMessage);
   if (!state.token) {
-    window.setTimeout(() => hideSectionSaving(savingOverlay), 900);
+    window.setTimeout(() => {
+      hideSectionSaving(savingOverlay);
+      if (typeof options.onSettled === "function") options.onSettled();
+    }, 900);
     return;
   }
   postAdmin(action, data)
@@ -3333,6 +3357,7 @@ async function persistAndRender(action, data, successMessage, options = {}) {
       state.pendingWrites = state.pendingWrites.filter(item => !(item.action === action && item.id === pendingIdFor(action, data)));
       savePendingWrites();
       if (typeof options.onSynced === "function") options.onSynced();
+      announceSharedMenuChange(action, data);
       scheduleBackgroundRefresh();
     })
     .catch(error => {
@@ -3340,6 +3365,7 @@ async function persistAndRender(action, data, successMessage, options = {}) {
     })
     .finally(() => {
       window.setTimeout(() => hideSectionSaving(savingOverlay), 260);
+      if (typeof options.onSettled === "function") options.onSettled();
     });
 }
 
@@ -3441,6 +3467,88 @@ function scheduleBackgroundRefresh() {
   scheduleBackgroundRefresh.timer = window.setTimeout(() => {
     if (state.token && !document.hidden) loadAdminData({ silent: true, fresh: true });
   }, 1400);
+}
+
+function startAdminSharedDataSync() {
+  window.clearInterval(state.sharedDataPollTimer);
+  bindSharedMenuChangeListener();
+  if (!state.token) return;
+  loadSharedAdminData();
+  state.sharedDataPollTimer = window.setInterval(loadSharedAdminData, ADMIN_SHARED_DATA_POLL_MS);
+}
+
+function loadSharedAdminData() {
+  if (!state.token || document.hidden) return;
+  if (!["mesas", "carta", "extras", "banco"].includes(state.activeView)) return;
+  if (state.syncInProgress || state.sectionSyncInProgress) {
+    state.sharedDataRefreshQueued = true;
+    return;
+  }
+  loadActiveSectionData({ silent: true }).finally(() => {
+    if (!state.sharedDataRefreshQueued) return;
+    state.sharedDataRefreshQueued = false;
+    window.setTimeout(loadSharedAdminData, 150);
+  });
+}
+
+function bindSharedMenuChangeListener() {
+  if (bindSharedMenuChangeListener.bound) return;
+  bindSharedMenuChangeListener.bound = true;
+
+  window.addEventListener("storage", event => {
+    if (event.key !== SHARED_MENU_CHANGE_KEY || !event.newValue) return;
+    try {
+      handleSharedMenuChange(JSON.parse(event.newValue));
+    } catch (error) {
+      console.warn("No se pudo leer aviso de carta", error);
+    }
+  });
+
+  if ("BroadcastChannel" in window) {
+    const channel = new BroadcastChannel(SHARED_MENU_CHANGE_KEY);
+    channel.addEventListener("message", event => handleSharedMenuChange(event.data));
+    bindSharedMenuChangeListener.channel = channel;
+  }
+}
+
+function announceSharedMenuChange(action, data = {}) {
+  if (!isSharedMenuAction(action)) return;
+  const message = {
+    source: "admin",
+    origin: ADMIN_SYNC_SOURCE_ID,
+    action,
+    id: pendingIdFor(action, data),
+    payload: sharedMenuPayload(action, data),
+    at: Date.now()
+  };
+
+  try {
+    localStorage.setItem(SHARED_MENU_CHANGE_KEY, JSON.stringify(message));
+  } catch (error) {
+    console.warn("No se pudo publicar cambio de carta", error);
+  }
+  bindSharedMenuChangeListener.channel?.postMessage(message);
+}
+
+function handleSharedMenuChange(message = {}) {
+  if (message.origin === ADMIN_SYNC_SOURCE_ID) return;
+  if (!state.token || !isSharedMenuAction(message.action)) return;
+  if (Date.now() - moneyToNumber(message.at) > 20000) return;
+
+  window.clearTimeout(handleSharedMenuChange.timer);
+  handleSharedMenuChange.timer = window.setTimeout(loadSharedAdminData, 180);
+}
+
+function isSharedMenuAction(action) {
+  return SHARED_MENU_ACTIONS.has(action);
+}
+
+function sharedMenuPayload(action, data = {}) {
+  if (action === "upsertProduct" && data.product) return { product: data.product };
+  if (action === "deleteProduct") return { producto_id: data.producto_id };
+  if (action === "upsertExtra" && data.extra) return { extra: data.extra };
+  if (action === "deleteExtra") return { extra_id: data.extra_id };
+  return {};
 }
 
 async function postAdmin(action, data) {
@@ -3578,7 +3686,7 @@ function normalizeProductsForAdmin(products) {
     nombre: product.nombre || "Producto Oscar's Parrilla",
     precio: moneyToNumber(product.precio),
     descripcion: product.descripcion || "",
-    imagen: product.imagen || `pizza${(index % 8) + 1}.png`,
+    imagen: product.imagen || "",
     opciones: product.opciones || "",
     sabores: normalizeProductFlavors(productFlavorSource(product)),
     orden: moneyToNumber(product.orden) || index + 1,
@@ -4029,6 +4137,44 @@ function updateSubmitLabels(form) {
   }
 }
 
+function beginFormSave(form, label) {
+  if (!form || form.dataset.saving === "true") return false;
+  form.dataset.saving = "true";
+  setFormSaveButton(form, true, label);
+  return true;
+}
+
+function finishFormSave(form) {
+  if (!form) return;
+  delete form.dataset.saving;
+  setFormSaveButton(form, false);
+}
+
+function setFormSaveButton(form, busy, label = "Guardando...") {
+  const button = form === el.productForm && el.productSubmit
+    ? el.productSubmit
+    : form?.querySelector("button[type='submit'].primary-btn, button[type='submit']");
+  if (!button) return;
+
+  if (busy) {
+    if (!button.dataset.readyText) button.dataset.readyText = button.textContent;
+    button.disabled = true;
+    button.classList.add("is-saving");
+    button.setAttribute("aria-busy", "true");
+    button.textContent = label;
+    return;
+  }
+
+  button.disabled = false;
+  button.classList.remove("is-saving");
+  button.removeAttribute("aria-busy");
+  if (button.dataset.readyText) {
+    button.textContent = button.dataset.readyText;
+    delete button.dataset.readyText;
+  }
+  updateSubmitLabels(form);
+}
+
 function updateFormChecks(form) {
   form.querySelectorAll("label").forEach(label => {
     const field = label.querySelector("input:not([type='hidden']), textarea, select");
@@ -4214,23 +4360,23 @@ function parseOrderItems(itemsValue) {
 }
 
 function suggestedProductImage() {
-  const nextIndex = (state.products.length % 8) + 1;
-  return `pizza${nextIndex}.png`;
+  return "";
 }
 
 function productVisualImage(product) {
   const image = String(product?.imagen || "").trim();
-  const beverageImage = getBeverageProductImage(product);
-  if (beverageImage && (!image || isPizzaPlaceholderImage(image))) return `./images/${beverageImage}`;
-  if (/^pizza([1-8])\.png$/i.test(image)) return `./images/${image}`;
   if (/^https?:\/\//i.test(image)) return versionPublicAssetUrl(image, product?.updated_at);
   if (image.startsWith("data:")) return image;
-  if (image.startsWith("./")) return image;
-  if (image.startsWith("images/")) return `./${image}`;
-  if (image) return `./images/${image}`;
-  const order = moneyToNumber(product?.orden);
-  const index = order > 0 ? ((order - 1) % 8) + 1 : 1;
-  return `./images/pizza${index}.png`;
+  return "";
+}
+
+function adminProductThumbTemplate(product) {
+  const image = productVisualImage(product);
+  if (image) {
+    return `<img class="admin-product-thumb" src="${escapeAttr(image)}" alt="" onerror="this.onerror=null;this.classList.add('image-load-error');this.remove();">`;
+  }
+  const label = labelFromId(product.categoria_id).slice(0, 2).toUpperCase();
+  return `<span class="admin-product-thumb admin-product-thumb-empty" aria-hidden="true">${escapeHtml(label)}</span>`;
 }
 
 function getBeverageProductImage(product) {
@@ -4432,14 +4578,94 @@ async function uploadSupabaseImage(file, folder, id) {
   const config = window.OSCARS_SUPABASE || {};
   const client = window.supabase.createClient(config.url, config.anonKey);
   const bucket = config.imageBucket || "product-images";
-  const ext = String(file.name || "image.png").split(".").pop().toLowerCase();
+  const uploadFile = await optimizeImageForUpload(file);
+  const ext = fileExtensionForUpload(uploadFile);
   const path = `${folder}/${id}-${Date.now()}.${ext}`;
-  const { error } = await client.storage.from(bucket).upload(path, file, {
+  const { error } = await client.storage.from(bucket).upload(path, uploadFile, {
     upsert: true,
     cacheControl: "60"
   });
   if (error) throw error;
   return versionPublicAssetUrl(client.storage.from(bucket).getPublicUrl(path).data.publicUrl);
+}
+
+async function optimizeImageForUpload(file) {
+  if (!file || !/^image\/(jpeg|png|webp)$/i.test(file.type || "")) return file;
+
+  let bitmap;
+  try {
+    bitmap = await loadUploadBitmap(file);
+  } catch (error) {
+    console.warn("No se pudo optimizar la imagen antes de subir", error);
+    return file;
+  }
+
+  const longestSide = Math.max(bitmap.width || 0, bitmap.height || 0);
+  const shouldResize = longestSide > IMAGE_UPLOAD_MAX_DIMENSION;
+  const shouldCompress = file.size > IMAGE_UPLOAD_TARGET_BYTES;
+  if (!shouldResize && !shouldCompress) {
+    closeUploadBitmap(bitmap);
+    return file;
+  }
+
+  const scale = shouldResize ? IMAGE_UPLOAD_MAX_DIMENSION / longestSide : 1;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: true });
+  context.drawImage(bitmap, 0, 0, width, height);
+  closeUploadBitmap(bitmap);
+
+  const blob = await canvasToBlob(canvas, "image/webp", IMAGE_UPLOAD_QUALITY)
+    || await canvasToBlob(canvas, file.type || "image/jpeg", IMAGE_UPLOAD_QUALITY);
+  if (!blob || blob.size >= file.size) return file;
+
+  const baseName = String(file.name || "image").replace(/\.[^.]+$/, "") || "image";
+  try {
+    return new File([blob], `${baseName}.${fileExtensionForUpload(blob)}`, {
+      type: blob.type || "image/webp",
+      lastModified: Date.now()
+    });
+  } catch {
+    return blob;
+  }
+}
+
+function loadUploadBitmap(file) {
+  if ("createImageBitmap" in window) return createImageBitmap(file);
+
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Imagen no legible"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function closeUploadBitmap(bitmap) {
+  if (typeof bitmap?.close === "function") bitmap.close();
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+}
+
+function fileExtensionForUpload(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (type.includes("webp")) return "webp";
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (type.includes("png")) return "png";
+  if (type.includes("gif")) return "gif";
+  return String(file?.name || "image.png").split(".").pop().toLowerCase() || "png";
 }
 
 function storagePathFromPublicUrl(url) {
@@ -4524,23 +4750,35 @@ function formatFileSize(bytes = 0) {
   return `${bytes} B`;
 }
 
+function normalizeManagedImageValue(value) {
+  const image = String(value || "").trim();
+  if (!image) return "";
+  if (/^https?:\/\//i.test(image) || image.startsWith("data:image/")) return image;
+  return "";
+}
+
 async function saveProduct(event) {
   event.preventDefault();
+  const imageFile = el.productForm.elements.image_file?.files?.[0];
+  if (!beginFormSave(el.productForm, imageFile ? "Subiendo imagen..." : "Guardando producto...")) return;
+  const savingHandle = showSectionSaving("upsertProduct", {});
   const data = getFormObject(el.productForm);
   const editing = Boolean(data.producto_id);
   const productId = data.producto_id || makeId("prod");
   const previousProduct = state.products.find(product => product.producto_id === productId);
   const previousImage = previousProduct?.imagen || "";
-  let image = data.imagen || suggestedProductImage();
+  let image = normalizeManagedImageValue(data.imagen || suggestedProductImage());
   let uploadedPath = "";
 
   try {
-    const uploaded = await uploadSupabaseImage(el.productForm.elements.image_file?.files?.[0], "products", productId);
+    const uploaded = await uploadSupabaseImage(imageFile, "products", productId);
     if (uploaded) {
       image = uploaded;
       uploadedPath = storagePathFromPublicUrl(uploaded);
     }
   } catch (error) {
+    hideSectionSaving(savingHandle);
+    finishFormSave(el.productForm);
     toast(`No se pudo subir la imagen: ${error.message}`);
     return;
   }
@@ -4561,7 +4799,9 @@ async function saveProduct(event) {
   upsertLocal("products", "producto_id", product);
   collapseForm(el.productForm);
   if (el.productForm.elements.image_file) el.productForm.elements.image_file.value = "";
+  finishFormSave(el.productForm);
   await persistAndRender("upsertProduct", { product }, editing ? "Producto actualizado." : "Producto agregado.", {
+    savingHandle,
     onSynced: () => {
       if (!uploadedPath) return;
       const previousPath = storagePathFromPublicUrl(previousImage);
@@ -4579,20 +4819,25 @@ async function saveProduct(event) {
 
 async function saveExtra(event) {
   event.preventDefault();
+  const imageFile = el.extraForm.elements.image_file?.files?.[0];
+  if (!beginFormSave(el.extraForm, imageFile ? "Subiendo imagen..." : "Guardando extra...")) return;
+  const savingHandle = showSectionSaving("upsertExtra", {});
   const data = getFormObject(el.extraForm);
   const extraId = data.extra_id || makeId("extra");
   const previousExtra = state.extras.find(extra => extra.extra_id === extraId);
   const previousImage = previousExtra?.imagen || "";
-  let image = data.imagen || "";
+  let image = normalizeManagedImageValue(data.imagen || "");
   let uploadedPath = "";
 
   try {
-    const uploaded = await uploadSupabaseImage(el.extraForm.elements.image_file?.files?.[0], "extras", extraId);
+    const uploaded = await uploadSupabaseImage(imageFile, "extras", extraId);
     if (uploaded) {
       image = uploaded;
       uploadedPath = storagePathFromPublicUrl(uploaded);
     }
   } catch (error) {
+    hideSectionSaving(savingHandle);
+    finishFormSave(el.extraForm);
     toast(`No se pudo subir la imagen: ${error.message}`);
     return;
   }
@@ -4609,7 +4854,9 @@ async function saveExtra(event) {
   upsertLocal("extras", "extra_id", extra);
   collapseForm(el.extraForm);
   if (el.extraForm.elements.image_file) el.extraForm.elements.image_file.value = "";
+  finishFormSave(el.extraForm);
   await persistAndRender("upsertExtra", { extra }, "Extra guardado.", {
+    savingHandle,
     onSynced: () => {
       if (!uploadedPath) return;
       const previousPath = storagePathFromPublicUrl(previousImage);

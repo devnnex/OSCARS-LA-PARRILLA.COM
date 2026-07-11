@@ -2408,7 +2408,20 @@ form label {
 }
 
 .product-visual-placeholder span {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: min(82%, 180px);
+  padding: 8px 12px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .quote-strip {

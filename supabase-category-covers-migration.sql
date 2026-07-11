@@ -106,7 +106,7 @@ with storage_covers as (
 latest_covers as (
   select
     category_id,
-    'https://itybnkzauqawxzvekmop.supabase.co/storage/v1/object/public/product-images/' || storage_path as image_url,
+    'https://zwguroyjngzrdbdwvzkg.supabase.co/storage/v1/object/public/product-images/' || storage_path as image_url,
     storage_path,
     updated_at
   from storage_covers

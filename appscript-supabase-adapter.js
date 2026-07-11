@@ -551,11 +551,12 @@
       nombre: required(product.nombre || product.title, "nombre"),
       precio: number(product.precio || product.price),
       descripcion: clean(product.descripcion || product.desc),
-      imagen: clean(product.imagen || product.image),
+      imagen: normalizeManagedImageValue(product.imagen || product.image),
       opciones: normalizeOptions(product.opciones || product.options || product.sizes),
       sabores: normalizeFlavors(flavorSource(product)),
       orden: number(product.orden),
-      activo: bool(product.activo)
+      activo: bool(product.activo),
+      updated_at: clean(product.updated_at || product.updatedAt || now())
     };
   }
 
@@ -564,9 +565,10 @@
       extra_id: clean(extra.extra_id || extra.id || makeId("extra")),
       nombre: required(extra.nombre || extra.name, "nombre"),
       precio: number(extra.precio || extra.price),
-      imagen: clean(extra.imagen || extra.image),
+      imagen: normalizeManagedImageValue(extra.imagen || extra.image),
       orden: number(extra.orden),
-      activo: bool(extra.activo)
+      activo: bool(extra.activo),
+      updated_at: clean(extra.updated_at || extra.updatedAt || now())
     };
   }
 
@@ -783,6 +785,13 @@
 
   function clean(value) {
     return String(value == null ? "" : value).trim();
+  }
+
+  function normalizeManagedImageValue(value) {
+    const image = clean(value);
+    if (!image) return "";
+    if (/^https?:\/\//i.test(image) || image.startsWith("data:image/")) return image;
+    return "";
   }
 
   function arrayOfClean(value) {

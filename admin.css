@@ -1131,7 +1131,8 @@ select {
 }
 
 .dispatch-card img,
-.admin-product-thumb {
+.admin-product-thumb,
+.dispatch-card-image-placeholder {
   width: 58px;
   height: 58px;
   object-fit: contain;
@@ -1141,6 +1142,16 @@ select {
     radial-gradient(circle at 50% 42%, rgba(34, 197, 94, 0.18), transparent 54%),
     rgba(255, 255, 255, 0.035);
   filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.45));
+}
+
+.admin-product-thumb-empty,
+.dispatch-card-image-placeholder {
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .dispatch-card > strong,
@@ -2712,7 +2723,8 @@ body.login-open .dashboard-main {
   }
 
   .admin-product-thumb,
-  .dispatch-card img {
+  .dispatch-card img,
+  .dispatch-card-image-placeholder {
     width: 76px;
     height: 76px;
   }
@@ -3073,7 +3085,8 @@ body.login-open .dashboard-main {
 }
 
 .admin-page .dispatch-card img,
-.admin-page .admin-product-thumb {
+.admin-page .admin-product-thumb,
+.admin-page .dispatch-card-image-placeholder {
   background:
     radial-gradient(circle at 50% 42%, rgba(255, 122, 0, 0.18), transparent 54%),
     rgba(255, 255, 255, 0.035);
@@ -3164,7 +3177,8 @@ body.login-open .dashboard-main {
 }
 
 .admin-page .dispatch-card img,
-.admin-page .admin-product-thumb {
+.admin-page .admin-product-thumb,
+.admin-page .dispatch-card-image-placeholder {
   background: radial-gradient(circle at 50% 42%, rgba(0, 87, 255, 0.2), transparent 54%), rgba(255, 255, 255, 0.035);
 }
 
@@ -4164,6 +4178,24 @@ body.login-open .dashboard-main {
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.admin-page button.is-saving {
+  cursor: progress;
+  opacity: 0.9;
+}
+
+.admin-page button.is-saving::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  margin-right: 8px;
+  border: 2px solid rgba(8, 8, 8, 0.22);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: neonCircleSpin 760ms linear infinite;
 }
 
 .admin-page .order-detail-card > .order-detail-close {
