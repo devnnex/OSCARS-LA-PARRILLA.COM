@@ -638,6 +638,9 @@
     return {
       packagingFee: number(config.packagingFee ?? config.packaging_fee ?? 1000),
       qrImage: clean(config.qrImage || config.qr_image),
+      heroImage: clean(config.heroImage || config.hero_image),
+      heroImageStoragePath: clean(config.heroImageStoragePath || config.hero_image_storage_path || config.heroStoragePath),
+      heroImageUpdatedAt: clean(config.heroImageUpdatedAt || config.hero_image_updated_at || config.heroUpdatedAt),
       categoryCovers: categoryCovers.map((cover, index) => ({
         category_id: slug(cover.category_id || cover.categoria_id || cover.id),
         image_url: clean(cover.image_url || cover.imagen || cover.url || cover.image),

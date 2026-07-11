@@ -12,7 +12,10 @@ const DEFAULT_OPERATION_CONFIG = {
     { method_id: "transferencia", nombre: "Transferencia", tipo: "transferencia", detalle: "Cuenta por confirmar", activo: true, orden: 2 },
     { method_id: "efectivo", nombre: "Efectivo", tipo: "efectivo", detalle: "Pago al recoger", activo: true, orden: 3 }
   ],
-  qrImage: ""
+  qrImage: "",
+  heroImage: "",
+  heroImageStoragePath: "",
+  heroImageUpdatedAt: ""
 };
 
 const DEFAULT_DELIVERY_SECTORS = [
@@ -226,6 +229,8 @@ const state = {
 
 const el = {
   categories: document.getElementById("categories"),
+  heroSection: document.getElementById("hero-section"),
+  heroImage: document.getElementById("hero-image"),
   catalog: document.getElementById("catalog"),
   search: document.getElementById("search"),
   refreshMenu: document.getElementById("refresh-menu"),
@@ -686,7 +691,10 @@ function normalizeOperationConfig(config = {}) {
       orden: moneyToNumber(method.orden ?? index + 1)
     })).filter(method => method.activo && method.nombre).sort(sortByOrderThenName),
     categoryCovers: normalizeCategoryCovers(config.categoryCovers || config.category_covers || []),
-    qrImage: String(config.qrImage || config.qr_image || "").trim()
+    qrImage: String(config.qrImage || config.qr_image || "").trim(),
+    heroImage: String(config.heroImage || config.hero_image || "").trim(),
+    heroImageStoragePath: String(config.heroImageStoragePath || config.hero_image_storage_path || config.heroStoragePath || "").trim(),
+    heroImageUpdatedAt: config.heroImageUpdatedAt || config.hero_image_updated_at || config.heroUpdatedAt || ""
   };
 }
 
@@ -843,10 +851,23 @@ function menuFingerprint(menu) {
 }
 
 function renderAll() {
+  renderHero();
   renderCategories();
   renderProducts();
   renderCart();
   renderAdmin();
+}
+
+function renderHero() {
+  if (!el.heroSection || !el.heroImage) return;
+  const config = normalizeOperationConfig(state.operationConfig || {});
+  const image = normalizeManagedImageValue(config.heroImage);
+  el.heroSection.classList.toggle("is-empty", !image);
+  if (!image) {
+    el.heroImage.removeAttribute("src");
+    return;
+  }
+  el.heroImage.src = versionImageUrl(image, config.heroImageUpdatedAt || state.updatedAt);
 }
 
 function renderCategories() {

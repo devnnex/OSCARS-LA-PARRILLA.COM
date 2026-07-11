@@ -60,6 +60,9 @@ const BUSINESS_RECEIPT_INFO = [
 const DEFAULT_OPERATION_CONFIG = {
   packagingFee: 1000,
   qrImage: "",
+  heroImage: "",
+  heroImageStoragePath: "",
+  heroImageUpdatedAt: "",
   categoryCovers: [],
   deliveryZones: [],
   paymentMethods: [
@@ -118,6 +121,7 @@ const state = {
   selectedOrderIds: new Set(),
   activeView: location.hash?.replace("#", "") || "mesas",
   productCategoryFilter: "todas",
+  selectedCoverTarget: "hero",
   selectedCoverCategory: "",
   categoryCoverFile: null,
   categoryCoverPreviewUrl: "",
@@ -182,6 +186,7 @@ const el = {
   categoryCoverModal: document.getElementById("category-cover-modal"),
   categoryCoverClose: document.getElementById("category-cover-close"),
   categoryCoverCancel: document.getElementById("category-cover-cancel"),
+  categoryCoverTarget: document.getElementById("category-cover-target"),
   categoryCoverSelect: document.getElementById("category-cover-select"),
   categoryCoverPreview: document.getElementById("category-cover-preview"),
   categoryCoverDrop: document.getElementById("category-cover-drop"),
@@ -332,6 +337,11 @@ function bindEvents() {
   el.categoryCoverCancel?.addEventListener("click", closeCategoryCoverModal);
   el.categoryCoverModal?.addEventListener("click", event => {
     if (event.target === el.categoryCoverModal) closeCategoryCoverModal();
+  });
+  el.categoryCoverTarget?.addEventListener("change", () => {
+    state.selectedCoverTarget = el.categoryCoverTarget.value === "category" ? "category" : "hero";
+    clearCategoryCoverFile();
+    renderCategoryCoverModal();
   });
   el.categoryCoverSelect?.addEventListener("change", () => {
     state.selectedCoverCategory = el.categoryCoverSelect.value;
@@ -1136,6 +1146,7 @@ function openCategoryCoverModal() {
     toast("Primero agrega productos para tener categorias.");
     return;
   }
+  state.selectedCoverTarget = state.selectedCoverTarget || "hero";
   state.selectedCoverCategory = state.selectedCoverCategory || categories[0].id;
   clearCategoryCoverFile();
   renderCategoryCoverModal();
@@ -1160,6 +1171,10 @@ function getAdminProductCategories() {
 
 function renderCategoryCoverModal() {
   const categories = getAdminProductCategories();
+  const target = state.selectedCoverTarget === "category" ? "category" : "hero";
+  if (el.categoryCoverTarget) el.categoryCoverTarget.value = target;
+  const categoryField = el.categoryCoverSelect?.closest("label");
+  if (categoryField) categoryField.classList.toggle("hidden", target !== "category");
   if (!categories.some(category => category.id === state.selectedCoverCategory)) {
     state.selectedCoverCategory = categories[0]?.id || "";
   }
@@ -1168,15 +1183,26 @@ function renderCategoryCoverModal() {
       <option value="${escapeAttr(category.id)}" ${category.id === state.selectedCoverCategory ? "selected" : ""}>${escapeHtml(category.label)} (${category.count})</option>
     `).join("");
   }
-  const cover = getCategoryCover(state.selectedCoverCategory);
-  const preview = state.categoryCoverPreviewUrl || cover?.image_url || adminCategoryFallbackImage(state.selectedCoverCategory);
+  const cover = target === "category" ? getCategoryCover(state.selectedCoverCategory) : null;
+  const preview = state.categoryCoverPreviewUrl
+    || (target === "hero" ? state.operationConfig?.heroImage : cover?.image_url)
+    || (target === "category" ? adminCategoryFallbackImage(state.selectedCoverCategory) : "");
   if (el.categoryCoverPreview) {
+    el.categoryCoverPreview.classList.toggle("is-hero-preview", target === "hero");
     el.categoryCoverPreview.innerHTML = preview
-      ? `<img src="${escapeAttr(preview)}" alt="Portada de ${escapeAttr(labelFromId(state.selectedCoverCategory))}">`
-      : `<span>Sin portada configurada</span>`;
+      ? `<img src="${escapeAttr(versionPublicAssetUrl(preview, target === "hero" ? state.operationConfig?.heroImageUpdatedAt : cover?.updated_at))}" alt="${target === "hero" ? "Hero principal" : `Portada de ${escapeAttr(labelFromId(state.selectedCoverCategory))}`}">`
+      : `<span>${target === "hero" ? "Sin hero configurado" : "Sin portada configurada"}</span>`;
   }
   if (el.categoryCoverFileMeta && !state.categoryCoverFile) {
-    el.categoryCoverFileMeta.textContent = cover?.image_url ? "Portada actual. Puedes reemplazarla." : "PNG, JPG o WEBP hasta 4 MB";
+    if (target === "hero") {
+      el.categoryCoverFileMeta.textContent = state.operationConfig?.heroImage
+        ? "Hero actual. Recomendado: 1200 x 675 px. Puedes reemplazarlo."
+        : "Hero recomendado: 1200 x 675 px. PNG, JPG o WEBP hasta 4 MB";
+    } else {
+      el.categoryCoverFileMeta.textContent = cover?.image_url
+        ? "Portada actual. Puedes reemplazarla."
+        : "PNG, JPG o WEBP hasta 4 MB";
+    }
   }
   setCategoryCoverProgress(0);
 }
@@ -1205,7 +1231,8 @@ function handleCategoryCoverFile(file) {
   state.categoryCoverFile = file;
   state.categoryCoverPreviewUrl = URL.createObjectURL(file);
   if (el.categoryCoverFileMeta) {
-    el.categoryCoverFileMeta.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+    const prefix = state.selectedCoverTarget === "hero" ? "Hero" : "Portada";
+    el.categoryCoverFileMeta.textContent = `${prefix}: ${file.name} · ${formatFileSize(file.size)}`;
   }
   renderCategoryCoverModal();
 }
@@ -1225,49 +1252,70 @@ function setCategoryCoverProgress(percent) {
 }
 
 async function saveCategoryCover() {
-  if (!state.selectedCoverCategory) return;
-  if (!state.categoryCoverFile && getCategoryCover(state.selectedCoverCategory)?.image_url) {
+  const target = state.selectedCoverTarget === "category" ? "category" : "hero";
+  if (target === "category" && !state.selectedCoverCategory) return;
+  if (!state.categoryCoverFile && target === "category" && getCategoryCover(state.selectedCoverCategory)?.image_url) {
     toast("Selecciona una nueva imagen para reemplazar la portada.");
     return;
   }
+  if (!state.categoryCoverFile && target === "hero" && state.operationConfig?.heroImage) {
+    toast("Selecciona una nueva imagen para reemplazar el hero.");
+    return;
+  }
   if (!state.categoryCoverFile) {
-    toast("Selecciona una imagen de portada.");
+    toast(target === "hero" ? "Selecciona una imagen para el hero." : "Selecciona una imagen de portada.");
     return;
   }
   let uploaded = "";
   try {
     setCategoryCoverProgress(20);
     const categoryId = state.selectedCoverCategory;
-    const current = getCategoryCover(categoryId);
-    uploaded = await uploadSupabaseImage(state.categoryCoverFile, "category-covers", categoryId);
+    const current = target === "category" ? getCategoryCover(categoryId) : null;
+    const previousHeroPath = state.operationConfig?.heroImageStoragePath || storagePathFromPublicUrl(state.operationConfig?.heroImage);
+    uploaded = await uploadSupabaseImage(state.categoryCoverFile, target === "hero" ? "hero" : "category-covers", target === "hero" ? "index-hero" : categoryId);
     setCategoryCoverProgress(78);
-    const categoryCovers = normalizeCategoryCovers(state.operationConfig.categoryCovers || [])
-      .filter(cover => cover.category_id !== categoryId);
-    categoryCovers.push({
-      category_id: categoryId,
-      image_url: uploaded,
-      storage_path: storagePathFromPublicUrl(uploaded),
-      orden: categoryOrderIndex(categoryId) + 1,
-      updated_at: new Date().toISOString()
-    });
-    state.operationConfig = normalizeOperationConfig({
-      ...state.operationConfig,
-      categoryCovers
-    });
+    const uploadedPath = storagePathFromPublicUrl(uploaded);
+    if (target === "hero") {
+      state.operationConfig = normalizeOperationConfig({
+        ...state.operationConfig,
+        heroImage: uploaded,
+        heroImageStoragePath: uploadedPath,
+        heroImageUpdatedAt: new Date().toISOString()
+      });
+    } else {
+      const categoryCovers = normalizeCategoryCovers(state.operationConfig.categoryCovers || [])
+        .filter(cover => cover.category_id !== categoryId);
+      categoryCovers.push({
+        category_id: categoryId,
+        image_url: uploaded,
+        storage_path: uploadedPath,
+        orden: categoryOrderIndex(categoryId) + 1,
+        updated_at: new Date().toISOString()
+      });
+      state.operationConfig = normalizeOperationConfig({
+        ...state.operationConfig,
+        categoryCovers
+      });
+    }
     state.bankFormDirty = false;
     clearCategoryCoverFile();
     renderCategoryCoverModal();
     cacheAdminData();
     await postAdmin("upsertOperationConfig", { operationConfig: state.operationConfig });
     announceSharedMenuChange("upsertOperationConfig", { operationConfig: state.operationConfig });
-    const uploadedPath = storagePathFromPublicUrl(uploaded);
-    const previousPath = current?.storage_path || storagePathFromPublicUrl(current?.image_url);
+    const previousPath = target === "hero"
+      ? previousHeroPath
+      : current?.storage_path || storagePathFromPublicUrl(current?.image_url);
     if (previousPath && previousPath !== uploadedPath) {
       void removeSupabaseImage(previousPath);
     }
-    void cleanupCategoryCoverUploads(categoryId, uploadedPath);
+    if (target === "hero") {
+      void cleanupHeroUploads(uploadedPath);
+    } else {
+      void cleanupCategoryCoverUploads(categoryId, uploadedPath);
+    }
     setCategoryCoverProgress(100);
-    toast("Portada guardada.");
+    toast(target === "hero" ? "Hero guardado." : "Portada guardada.");
   } catch (error) {
     console.warn("No se pudo guardar portada", error);
     if (uploaded) {
@@ -1357,6 +1405,9 @@ function parseBankForm() {
   return normalizeOperationConfig({
     packagingFee: moneyToNumber(form.elements.packaging_fee.value),
     qrImage: form.elements.qr_image?.value.trim() || state.operationConfig.qrImage || "",
+    heroImage: state.operationConfig.heroImage || "",
+    heroImageStoragePath: state.operationConfig.heroImageStoragePath || "",
+    heroImageUpdatedAt: state.operationConfig.heroImageUpdatedAt || "",
     categoryCovers: state.operationConfig.categoryCovers || [],
     paymentMethods: readPaymentMethodsEditor(),
     deliveryZones: readDeliveryZonesEditor()
@@ -1474,6 +1525,9 @@ function normalizeOperationConfig(config = {}) {
   return {
     packagingFee: Math.max(0, moneyToNumber(config.packagingFee ?? config.packaging_fee ?? DEFAULT_OPERATION_CONFIG.packagingFee)),
     qrImage: String(config.qrImage || config.qr_image || "").trim(),
+    heroImage: String(config.heroImage || config.hero_image || "").trim(),
+    heroImageStoragePath: String(config.heroImageStoragePath || config.hero_image_storage_path || config.heroStoragePath || "").trim(),
+    heroImageUpdatedAt: config.heroImageUpdatedAt || config.hero_image_updated_at || config.heroUpdatedAt || "",
     categoryCovers: normalizeCategoryCovers(categoryCovers),
     deliveryZones: deliveryZones.map((zone, index) => ({
       zone_id: zone.zone_id || zone.id || slugify(zone.nombre || zone.name || `zona-${index + 1}`),
@@ -4742,6 +4796,10 @@ async function cleanupExtraUploads(extraId, keepPath) {
 
 async function cleanupBankUploads(keepPath) {
   return cleanupStorageUploads("bank", "qr-pago", keepPath);
+}
+
+async function cleanupHeroUploads(keepPath) {
+  return cleanupStorageUploads("hero", "index-hero", keepPath);
 }
 
 function formatFileSize(bytes = 0) {

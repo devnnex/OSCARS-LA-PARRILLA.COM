@@ -247,6 +247,9 @@ values (
   jsonb_build_object(
     'packagingFee', 1000,
     'qrImage', '',
+    'heroImage', '',
+    'heroImageStoragePath', '',
+    'heroImageUpdatedAt', '',
     'categoryCovers', jsonb_build_array(),
     'paymentMethods', jsonb_build_array(),
     'deliveryZones', jsonb_build_array()

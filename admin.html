@@ -637,8 +637,14 @@
       <button class="round-btn modal-close" id="category-cover-close" type="button" aria-label="Cerrar portadas">x</button>
       <span class="eyebrow">Carta premium</span>
       <h2>Administrar portadas</h2>
-      <p>Define una imagen principal por categoria para la carta del cliente.</p>
-      <label>Categoria
+      <p>Define las imagenes principales de la carta del cliente.</p>
+      <label>Ubicación
+        <select id="category-cover-target">
+          <option value="hero">Hero principal</option>
+          <option value="category">Portada de categoría</option>
+        </select>
+      </label>
+      <label class="category-cover-category-field">Categoria
         <select id="category-cover-select"></select>
       </label>
       <div class="category-cover-preview" id="category-cover-preview"></div>
@@ -646,7 +652,7 @@
         <input id="category-cover-file" type="file" accept="image/png,image/jpeg,image/webp">
         <span class="category-cover-drop-icon" aria-hidden="true">+</span>
         <strong>Arrastra una imagen o toca para seleccionar</strong>
-        <small id="category-cover-file-meta">PNG, JPG o WEBP hasta 4 MB</small>
+        <small id="category-cover-file-meta">Hero recomendado: 1200 x 675 px. PNG, JPG o WEBP hasta 4 MB</small>
       </label>
       <div class="category-cover-progress" id="category-cover-progress"><span></span></div>
       <div class="form-buttons">
@@ -676,8 +682,8 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <audio id="order-alert-sound" src="./sound/alert.mp3" preload="none"></audio>
   <script src="./supabase-lite.js?v=20260708-2"></script>
-  <script src="./supabase-config.js?v=20260711-4"></script>
-  <script src="./appscript-supabase-adapter.js?v=20260711-4"></script>
-  <script src="./admin.js?v=20260711-4"></script>
+  <script src="./supabase-config.js?v=20260711-5"></script>
+  <script src="./appscript-supabase-adapter.js?v=20260711-5"></script>
+  <script src="./admin.js?v=20260711-5"></script>
 </body>
 </html>

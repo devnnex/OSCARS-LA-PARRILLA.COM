@@ -4264,6 +4264,15 @@ body.login-open .dashboard-main {
   object-fit: cover;
 }
 
+.category-cover-preview.is-hero-preview {
+  min-height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+.category-cover-preview.is-hero-preview img {
+  max-height: none;
+}
+
 .category-cover-preview span {
   color: rgba(255, 255, 255, 0.62);
   font-weight: 800;
@@ -4271,6 +4280,7 @@ body.login-open .dashboard-main {
 
 .category-cover-drop {
   position: relative;
+  margin-top: 12px;
   min-height: 132px;
   display: grid;
   place-items: center;
@@ -4336,6 +4346,15 @@ body.login-open .dashboard-main {
 
 .category-cover-progress:not(.is-active) {
   opacity: 0.46;
+}
+
+.category-cover-modal-card > .form-buttons {
+  position: sticky;
+  bottom: -1px;
+  z-index: 3;
+  margin: 2px -2px -2px;
+  padding: 12px 2px 2px;
+  background: linear-gradient(180deg, rgba(12, 6, 2, 0), rgba(12, 6, 2, 0.96) 34%);
 }
 
 @media (max-width: 620px) {

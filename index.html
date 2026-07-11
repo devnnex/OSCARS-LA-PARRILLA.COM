@@ -37,23 +37,11 @@
     </header>
 
     <main class="main" id="inicio">
-      <section class="hero">
-        <div class="hero-copy">
-          <span class="eyebrow">Parrilla y sabor en cada bocado</span>
-          <h1>Tu próxima hamburguesa favorita está aquí.</h1>
-          <p>Estamos en Barrancabermeja, Santander. Explora nuestro menú y realiza tu pedido aquí.</p>
-        </div>
-        <div class="hero-panel" aria-label="Estado de la tienda">
-          <div>
-            <span class="metric-label">Atención</span>
-            <strong id="store-status">Lunes a domingo, 5:00 p.m. - 11:00 p.m.</strong>
-          </div>
-          <div>
-            <span class="metric-label">Actualización</span>
-            <strong id="sync-status">Sincronizando</strong>
-          </div>
-        </div>
+      <section class="hero is-empty" id="hero-section" aria-label="Oscar's Parrilla">
+        <img id="hero-image" alt="Oscar's Parrilla" loading="eager" decoding="async">
       </section>
+      <span class="sr-only" id="store-status">Lunes a domingo, 5:00 p.m. - 11:00 p.m.</span>
+      <span class="sr-only" id="sync-status">Sincronizando</span>
 
       <section class="menu-tools" aria-label="Herramientas de carta">
         <div class="search-box">
@@ -68,12 +56,12 @@
         </button>
       </section>
 
-      <nav class="categories" id="categories" aria-label="Categorías"></nav>
-
       <div class="catalog-heading">
-        <h2>Populares de Oscar's Parrilla</h2>
+        <h2>Favoritos de Oscar's La Parrilla</h2>
         <span aria-hidden="true">::</span>
       </div>
+
+      <nav class="categories" id="categories" aria-label="Categorías"></nav>
 
       <section class="catalog" id="catalog" aria-live="polite"></section>
     </main>
@@ -339,9 +327,9 @@
   </div>
 
   <script src="./supabase-lite.js?v=20260708-2"></script>
-  <script src="./supabase-config.js?v=20260711-4"></script>
-  <script src="./appscript-supabase-adapter.js?v=20260711-4"></script>
-  <script src="./app.js?v=20260711-4"></script>
+  <script src="./supabase-config.js?v=20260711-5"></script>
+  <script src="./appscript-supabase-adapter.js?v=20260711-5"></script>
+  <script src="./app.js?v=20260711-5"></script>
 </body>
 </html>
 
