@@ -230,7 +230,8 @@ const state = {
   categoryNoticeTimer: null,
   categoryAutoplayTimer: null,
   categoryAutoplayResumeTimer: null,
-  categoryAutoplayPausedUntil: 0
+  categoryAutoplayPausedUntil: 0,
+  categoryAutoplayNextAt: 0
 };
 
 const el = {
@@ -473,7 +474,7 @@ function bindCategoryWheelScroll() {
   }, { passive: false });
 
   ["pointerdown", "touchstart"].forEach(eventName => {
-    el.categories.addEventListener(eventName, pauseCategoryAutoplayForUser, { passive: true });
+    el.categories.addEventListener(eventName, () => pauseCategoryAutoplayForUser(), { passive: true });
   });
 
   el.categories.addEventListener("keydown", event => {
@@ -489,7 +490,6 @@ function bindCategoryPageActivity() {
     pauseCategoryAutoplayForUser(CATEGORY_AUTOPLAY_PAGE_IDLE_MS);
   };
 
-  window.addEventListener("scroll", () => pauseCategoryAutoplayForUser(CATEGORY_AUTOPLAY_PAGE_IDLE_MS), { passive: true });
   window.addEventListener("wheel", pauseForPageActivity, { passive: true });
   window.addEventListener("touchmove", pauseForPageActivity, { passive: true });
 }
@@ -550,9 +550,16 @@ function startMenuRealtimeSync() {
   }, MENU_SYNC_INTERVAL_MS);
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) loadMenu({ background: true, force: true });
+    if (!document.hidden) {
+      loadMenu({ background: true, force: true });
+      scheduleCategoryAutoplay();
+    }
   });
-  window.addEventListener("focus", () => loadMenu({ background: true, force: true }));
+  window.addEventListener("focus", () => {
+    loadMenu({ background: true, force: true });
+    scheduleCategoryAutoplay();
+  });
+  window.addEventListener("pageshow", scheduleCategoryAutoplay);
   window.addEventListener("online", () => loadMenu({ background: true, force: true }));
 }
 
@@ -953,26 +960,46 @@ function scrollCategoryIntoView(categoryId) {
 }
 
 function scheduleCategoryAutoplay() {
-  window.clearInterval(state.categoryAutoplayTimer);
+  window.clearTimeout(state.categoryAutoplayTimer);
   state.categoryAutoplayTimer = null;
   if (!el.categories || state.categories.length < 2 || document.hidden) return;
 
-  const idleLeft = state.categoryAutoplayPausedUntil - Date.now();
-  if (idleLeft > 0) {
-    window.clearTimeout(state.categoryAutoplayResumeTimer);
-    state.categoryAutoplayResumeTimer = window.setTimeout(scheduleCategoryAutoplay, idleLeft);
-    return;
+  const now = Date.now();
+  if (!state.categoryAutoplayNextAt) {
+    state.categoryAutoplayNextAt = now + CATEGORY_AUTOPLAY_STEP_MS;
   }
-
-  state.categoryAutoplayTimer = window.setInterval(advanceCategoryAutoplay, CATEGORY_AUTOPLAY_STEP_MS);
+  const dueAt = Math.max(state.categoryAutoplayPausedUntil || 0, state.categoryAutoplayNextAt);
+  state.categoryAutoplayTimer = window.setTimeout(runCategoryAutoplay, Math.max(0, dueAt - now));
 }
 
 function pauseCategoryAutoplayForUser(duration = CATEGORY_AUTOPLAY_IDLE_MS) {
-  state.categoryAutoplayPausedUntil = Date.now() + duration;
-  window.clearInterval(state.categoryAutoplayTimer);
-  state.categoryAutoplayTimer = null;
+  const idleDuration = Number.isFinite(duration) ? duration : CATEGORY_AUTOPLAY_IDLE_MS;
+  const resumeAt = Date.now() + idleDuration;
+  state.categoryAutoplayPausedUntil = resumeAt;
+  state.categoryAutoplayNextAt = resumeAt;
+  window.clearTimeout(state.categoryAutoplayTimer);
   window.clearTimeout(state.categoryAutoplayResumeTimer);
-  state.categoryAutoplayResumeTimer = window.setTimeout(scheduleCategoryAutoplay, duration);
+  state.categoryAutoplayTimer = null;
+  state.categoryAutoplayResumeTimer = null;
+  scheduleCategoryAutoplay();
+}
+
+function runCategoryAutoplay() {
+  state.categoryAutoplayTimer = null;
+  if (!el.categories || state.categories.length < 2 || document.hidden) {
+    scheduleCategoryAutoplay();
+    return;
+  }
+
+  const now = Date.now();
+  if (state.categoryAutoplayPausedUntil > now) {
+    scheduleCategoryAutoplay();
+    return;
+  }
+
+  state.categoryAutoplayNextAt = now + CATEGORY_AUTOPLAY_STEP_MS;
+  advanceCategoryAutoplay();
+  scheduleCategoryAutoplay();
 }
 
 function advanceCategoryAutoplay() {
