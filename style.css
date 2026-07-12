@@ -4450,4 +4450,53 @@ body:not(.admin-page) strong {
   body:not(.admin-page) .search-box input {
     font-size: 16px;
   }
+
+  body:not(.admin-page) .checkout-card {
+    overflow-x: clip;
+  }
+
+  body:not(.admin-page) #checkout-form,
+  body:not(.admin-page) .checkout-card .step,
+  body:not(.admin-page) .checkout-card label,
+  body:not(.admin-page) .checkout-card input,
+  body:not(.admin-page) .checkout-card textarea,
+  body:not(.admin-page) .checkout-card select,
+  body:not(.admin-page) .checkout-card .client-summary,
+  body:not(.admin-page) .checkout-card .checkout-products-box,
+  body:not(.admin-page) .checkout-card .transfer-box {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  body:not(.admin-page) .checkout-card .segmented {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body:not(.admin-page) .checkout-card .checkout-products-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body:not(.admin-page) .checkout-card .checkout-products-head .secondary-btn,
+  body:not(.admin-page) .checkout-card .form-actions button,
+  body:not(.admin-page) .checkout-card .transfer-download {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  body:not(.admin-page) .checkout-card .summary-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 8px 12px;
+  }
+
+  body:not(.admin-page) .checkout-card .summary-row span,
+  body:not(.admin-page) .checkout-card .summary-row strong,
+  body:not(.admin-page) .checkout-card .summary-row small,
+  body:not(.admin-page) .checkout-card .payment-copy-row,
+  body:not(.admin-page) .checkout-card .payment-copy-row em {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
