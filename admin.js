@@ -10,6 +10,7 @@ const SHARED_MENU_ACTIONS = new Set(["upsertProduct", "deleteProduct", "upsertEx
 const IMAGE_UPLOAD_MAX_DIMENSION = 1280;
 const IMAGE_UPLOAD_TARGET_BYTES = 600 * 1024;
 const IMAGE_UPLOAD_QUALITY = 0.8;
+const PRODUCT_NEW_CATEGORY_VALUE = "__new__";
 const ADMIN_PAGE_TITLE = document.title;
 const MENU_CATEGORY_ORDER = [
   "bebidas",
@@ -207,6 +208,8 @@ const el = {
   cashiersTable: document.getElementById("cashiers-table"),
   productSubmit: document.getElementById("product-submit"),
   productForm: document.getElementById("product-form"),
+  productCategorySelect: document.getElementById("product-category-select"),
+  productNewCategoryWrap: document.getElementById("product-new-category-wrap"),
   extraForm: document.getElementById("extra-form"),
   inventoryForm: document.getElementById("inventory-form"),
   cashierForm: document.getElementById("cashier-form"),
@@ -332,6 +335,7 @@ function bindEvents() {
     state.productStatusFilter = el.productStatusFilter.value;
     renderProducts();
   });
+  el.productCategorySelect?.addEventListener("change", updateProductCategoryMode);
   el.categoryCoversOpen?.addEventListener("click", openCategoryCoverModal);
   el.categoryCoverClose?.addEventListener("click", closeCategoryCoverModal);
   el.categoryCoverCancel?.addEventListener("click", closeCategoryCoverModal);
@@ -821,8 +825,9 @@ function hydrateAdminData(data = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(data, "cashiers")) state.cashiers = normalizeCashiers(data.cashiers || []);
   if (Object.prototype.hasOwnProperty.call(data, "operationConfig")) {
-    state.operationConfig = normalizeOperationConfig(data.operationConfig || {});
-    state.bankFormDirty = false;
+    const bankEditing = state.bankFormDirty || isBankEditorFocused();
+    if (!state.bankFormDirty) state.operationConfig = normalizeOperationConfig(data.operationConfig || {});
+    if (!bankEditing) state.bankFormDirty = false;
   }
   if (Object.prototype.hasOwnProperty.call(data, "kpis")) state.kpis = data.kpis || {};
   applyRoleAccess();
@@ -1045,61 +1050,143 @@ function cacheAdminData() {
   }
 }
 
-function renderAll() {
-  renderKpis();
-  renderIncome();
-  renderOrders();
-  renderProducts();
-  renderExtras();
-  renderTables();
-  renderTableTicket();
-  renderDispatchProducts();
-  renderInventory();
-  renderInventoryMovements();
-  renderCashiers();
-  renderBankConfig();
-  seedAssistantMessages();
+function withPreservedAdminScroll(renderFn) {
+  const snapshot = captureAdminScrollSnapshot();
+  try {
+    renderFn();
+  } finally {
+    restoreAdminScrollSnapshot(snapshot);
+  }
 }
 
-function renderSection(view = state.activeView) {
-  if (view === "mesas") {
-    renderKpis();
-    renderTables();
-    renderTableTicket();
-    renderDispatchProducts();
-    return;
+function captureAdminScrollSnapshot() {
+  const targets = [
+    ["products-table", el.productsTable?.querySelector(".products-table")],
+    ["product-category-strip", el.productCategoryStrip],
+    ["extras-table", el.extrasTable?.querySelector(".extras-table")],
+    ["income-list", el.incomeList],
+    ["orders-list", el.ordersList],
+    ["table-ticket", el.tableTicket],
+    ["dispatch-products", el.dispatchProducts],
+    ["inventory-table", el.inventoryTable?.querySelector(".crud-table")],
+    ["inventory-movements", el.inventoryMovements],
+    ["cashiers-table", el.cashiersTable?.querySelector(".crud-table")],
+    ["assistant-carta", document.getElementById("assistant-carta-messages")],
+    ["sidebar-chat", el.sidebarChatMessages]
+  ];
+
+  return targets.map(([key, target]) => scrollSnapshotEntry(key, target)).filter(Boolean);
+}
+
+function scrollSnapshotEntry(key, target) {
+  if (!target) return null;
+  if (target === window) {
+    return { key, top: window.scrollY || 0, left: window.scrollX || 0, window: true };
   }
-  if (view === "resumen") {
-    renderKpis();
-    renderIncome();
-    return;
-  }
-  if (view === "ordenes") {
+  return {
+    key,
+    top: target.scrollTop || 0,
+    left: target.scrollLeft || 0
+  };
+}
+
+function restoreAdminScrollSnapshot(snapshot = []) {
+  const restore = () => {
+    snapshot.forEach(entry => {
+      const target = entry.window ? window : scrollTargetByKey(entry.key);
+      if (!target) return;
+      if (entry.window) {
+        window.scrollTo(entry.left, entry.top);
+        return;
+      }
+      target.scrollTop = Math.min(entry.top, Math.max(0, target.scrollHeight - target.clientHeight));
+      target.scrollLeft = Math.min(entry.left, Math.max(0, target.scrollWidth - target.clientWidth));
+    });
+  };
+  restore();
+  const scheduleRestore = window.requestAnimationFrame
+    ? window.requestAnimationFrame.bind(window)
+    : callback => window.setTimeout(callback, 0);
+  scheduleRestore(restore);
+}
+
+function scrollTargetByKey(key) {
+  const map = {
+    "products-table": () => el.productsTable?.querySelector(".products-table"),
+    "product-category-strip": () => el.productCategoryStrip,
+    "extras-table": () => el.extrasTable?.querySelector(".extras-table"),
+    "income-list": () => el.incomeList,
+    "orders-list": () => el.ordersList,
+    "table-ticket": () => el.tableTicket,
+    "dispatch-products": () => el.dispatchProducts,
+    "inventory-table": () => el.inventoryTable?.querySelector(".crud-table"),
+    "inventory-movements": () => el.inventoryMovements,
+    "cashiers-table": () => el.cashiersTable?.querySelector(".crud-table"),
+    "assistant-carta": () => document.getElementById("assistant-carta-messages"),
+    "sidebar-chat": () => el.sidebarChatMessages
+  };
+  return map[key]?.() || null;
+}
+
+function renderAll() {
+  withPreservedAdminScroll(() => {
     renderKpis();
     renderIncome();
     renderOrders();
-    return;
-  }
-  if (view === "carta") {
     renderProducts();
-    return;
-  }
-  if (view === "extras") {
     renderExtras();
-    return;
-  }
-  if (view === "inventario") {
+    renderTables();
+    renderTableTicket();
+    renderDispatchProducts();
     renderInventory();
     renderInventoryMovements();
-    return;
-  }
-  if (view === "cajeros") {
     renderCashiers();
-    return;
-  }
-  if (view === "banco") {
     renderBankConfig();
-  }
+    seedAssistantMessages();
+  });
+}
+
+function renderSection(view = state.activeView) {
+  withPreservedAdminScroll(() => {
+    if (view === "mesas") {
+      renderKpis();
+      renderTables();
+      renderTableTicket();
+      renderDispatchProducts();
+      return;
+    }
+    if (view === "resumen") {
+      renderKpis();
+      renderIncome();
+      return;
+    }
+    if (view === "ordenes") {
+      renderKpis();
+      renderIncome();
+      renderOrders();
+      return;
+    }
+    if (view === "carta") {
+      renderProducts();
+      return;
+    }
+    if (view === "extras") {
+      renderExtras();
+      return;
+    }
+    if (view === "inventario") {
+      renderInventory();
+      renderInventoryMovements();
+      return;
+    }
+    if (view === "cajeros") {
+      renderCashiers();
+      return;
+    }
+    if (view === "banco") {
+      renderBankConfig();
+    }
+  });
 }
 
 function renderSyncedData(options = {}) {
@@ -1108,17 +1195,19 @@ function renderSyncedData(options = {}) {
     return;
   }
 
-  renderKpis();
-  renderIncome();
-  renderOrders();
-  renderProducts();
-  renderExtras();
-  renderDispatchProducts();
-  renderInventory();
-  renderInventoryMovements();
-  renderCashiers();
-  renderBankConfig();
-  seedAssistantMessages();
+  withPreservedAdminScroll(() => {
+    renderKpis();
+    renderIncome();
+    renderOrders();
+    renderProducts();
+    renderExtras();
+    renderDispatchProducts();
+    renderInventory();
+    renderInventoryMovements();
+    renderCashiers();
+    renderBankConfig();
+    seedAssistantMessages();
+  });
 }
 
 function hasPendingTableWrite(tableId = state.selectedTableId) {
@@ -1130,7 +1219,7 @@ function hasPendingTableWrite(tableId = state.selectedTableId) {
 }
 
 function renderBankConfig() {
-  if (!el.bankConfigForm || state.bankFormDirty) return;
+  if (!el.bankConfigForm || state.bankFormDirty || isBankEditorFocused()) return;
   const config = normalizeOperationConfig(state.operationConfig);
   el.bankConfigForm.elements.packaging_fee.value = formatMoney(config.packagingFee);
   if (el.bankConfigForm.elements.qr_image) el.bankConfigForm.elements.qr_image.value = config.qrImage || "";
@@ -1138,6 +1227,18 @@ function renderBankConfig() {
   renderPaymentMethodsEditor(config.paymentMethods);
   renderDeliveryZonesEditor(config.deliveryZones);
   renderBankPreview(config);
+}
+
+function isBankEditorFocused() {
+  if (state.activeView !== "banco") return false;
+  const active = document.activeElement;
+  if (!active || active === document.body) return false;
+  return Boolean(
+    el.bankConfigForm?.contains(active) ||
+    el.paymentMethodsEditor?.contains(active) ||
+    el.deliveryZonesEditor?.contains(active) ||
+    el.bankQrFile === active
+  );
 }
 
 function openCategoryCoverModal() {
@@ -1331,11 +1432,25 @@ async function saveCategoryCover() {
 
 function renderQrPickerPreview(src = "") {
   if (!el.qrPickerPreview) return;
-  const previewSrc = versionPublicAssetUrl(src);
-  el.qrPickerPreview.innerHTML = previewSrc ? `<img src="${escapeAttr(previewSrc)}" alt="QR configurado">` : "";
+  const previewSrc = stablePublicAssetUrl(src);
+  if (el.qrPickerPreview.dataset.previewSrc !== previewSrc) {
+    el.qrPickerPreview.dataset.previewSrc = previewSrc;
+    el.qrPickerPreview.innerHTML = previewSrc ? `<img src="${escapeAttr(previewSrc)}" alt="QR configurado">` : "";
+  }
   el.qrPickerPreview.classList.toggle("has-image", Boolean(src));
   if (el.qrPickerCaption) {
     el.qrPickerCaption.textContent = src ? "QR cargado. Puedes cambiarlo seleccionando otra imagen." : "PNG, JPG o WEBP desde este computador";
+  }
+}
+
+function stablePublicAssetUrl(src = "") {
+  const raw = String(src || "").trim();
+  if (!raw || raw.startsWith("data:") || !/^https?:\/\//i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    return versionPublicAssetUrl(raw, parsed.searchParams.get("v") || storagePathFromPublicUrl(raw) || raw);
+  } catch (error) {
+    return raw;
   }
 }
 
@@ -1386,7 +1501,7 @@ function renderBankPreview(config = state.operationConfig) {
       <article class="bank-preview-card">
         <span class="eyebrow">Empaque</span>
         <h3>${formatMoney(safeConfig.packagingFee)} por producto</h3>
-        ${safeConfig.qrImage ? `<img src="${escapeAttr(versionPublicAssetUrl(safeConfig.qrImage))}" alt="QR configurado">` : `<p>Sin QR cargado.</p>`}
+        ${safeConfig.qrImage ? `<img src="${escapeAttr(stablePublicAssetUrl(safeConfig.qrImage))}" alt="QR configurado">` : `<p>Sin QR cargado.</p>`}
       </article>
       <article class="bank-preview-card">
         <span class="eyebrow">Métodos activos</span>
@@ -1583,7 +1698,8 @@ async function saveBankConfig() {
         if (el.bankQrFile) el.bankQrFile.value = "";
       }
     } catch (error) {
-      toast(`No se pudo subir el QR: ${error.message}`);
+      console.warn("No se pudo subir el QR", error);
+      toast("No se pudo subir el QR. Intenta nuevamente.");
       return;
     }
   }
@@ -1594,6 +1710,7 @@ async function saveBankConfig() {
   const pending = queuePendingWrite("upsertOperationConfig", { operationConfig });
   cacheAdminData();
   try {
+    toast("Guardando configuración en la base de datos...");
     await postAdmin(pending.action, pending.data);
     state.pendingWrites = state.pendingWrites.filter(item => !(item.action === pending.action && item.id === pending.id));
     savePendingWrites();
@@ -1610,10 +1727,10 @@ async function saveBankConfig() {
         console.warn("No se pudieron limpiar QR antiguos", cleanupError);
       });
     }
-    toast("Configuración de banco y domicilios guardada en Supabase.");
+    toast("Configuración de banco y domicilios guardada.");
   } catch (error) {
     console.warn("No se pudo sincronizar banco", error);
-    toast(`No se pudo guardar en Supabase: ${error.message}`);
+    toast("No se pudo guardar en la base de datos. Intenta nuevamente.");
   }
 }
 
@@ -2119,7 +2236,7 @@ async function deleteOrdersRecords() {
   const confirmed = await smartConfirm({
     title: "Eliminar registros de ordenes",
     message: isAll
-      ? "¿En realidad desea borrar definitivamente todas las ordenes guardadas en Supabase? Esta accion no se puede deshacer."
+      ? "¿En realidad desea borrar definitivamente todas las ordenes guardadas en la base de datos? Esta accion no se puede deshacer."
       : `¿En realidad desea borrar definitivamente ${orderIds.length} ${cleanupScopeLabel(scope)}? Esta accion no se puede deshacer.`,
     confirmText: "Eliminar registros",
     danger: true
@@ -2260,6 +2377,7 @@ function setCleanupBusy(button, busy, label) {
 
 function renderProducts() {
   renderProductCategoryStrip();
+  renderProductCategorySelectOptions();
   const term = normalize(state.productSearch);
   const products = state.productCategoryFilter === "todas"
     ? state.products
@@ -2326,6 +2444,53 @@ function renderProductCategoryStrip() {
       renderProducts();
     });
   });
+}
+
+function renderProductCategorySelectOptions(selectedValue = el.productCategorySelect?.value || "") {
+  if (!el.productCategorySelect) return;
+  if (isProductCategoryPickerFocused()) {
+    updateProductCategoryMode();
+    return;
+  }
+  const selected = String(selectedValue || "");
+  const categoryIds = new Set(state.products.map(product => product.categoria_id || "").filter(Boolean));
+  if (selected && selected !== PRODUCT_NEW_CATEGORY_VALUE) categoryIds.add(selected);
+  const categories = [...categoryIds]
+    .sort(categorySort)
+    .map(id => ({ id, label: labelFromId(id) }));
+
+  el.productCategorySelect.innerHTML = [
+    `<option value="">Selecciona una categoria</option>`,
+    ...categories.map(category => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`),
+    `<option value="${PRODUCT_NEW_CATEGORY_VALUE}">Crear nueva categoria</option>`
+  ].join("");
+
+  el.productCategorySelect.value = selected === PRODUCT_NEW_CATEGORY_VALUE || categoryIds.has(selected) ? selected : "";
+  updateProductCategoryMode();
+}
+
+function isProductCategoryPickerFocused() {
+  const active = document.activeElement;
+  if (!active || active === document.body) return false;
+  return active === el.productCategorySelect || Boolean(el.productNewCategoryWrap?.contains(active));
+}
+
+function updateProductCategoryMode() {
+  if (!el.productCategorySelect || !el.productNewCategoryWrap) return;
+  const isNewCategory = el.productCategorySelect.value === PRODUCT_NEW_CATEGORY_VALUE;
+  const input = el.productNewCategoryWrap.querySelector("input");
+  el.productNewCategoryWrap.classList.toggle("hidden", !isNewCategory);
+  if (input) {
+    input.required = isNewCategory;
+    if (!isNewCategory) input.value = "";
+  }
+}
+
+function selectedProductCategoryFromForm(data = {}) {
+  if (data.categoria_id === PRODUCT_NEW_CATEGORY_VALUE) {
+    return normalizeCategoryId(data.categoria_id_new || "");
+  }
+  return normalizeCategoryId(data.categoria_id || "");
 }
 
 function categorySort(a, b) {
@@ -3159,6 +3324,7 @@ function fillProductForm(productId) {
   const product = state.products.find(item => item.producto_id === productId);
   if (!product) return;
   openEditorForm(el.productForm, `Editando: ${product.nombre}`);
+  renderProductCategorySelectOptions(product.categoria_id);
   setFormValues(el.productForm, {
     producto_id: product.producto_id,
     categoria_id: product.categoria_id,
@@ -3171,6 +3337,7 @@ function fillProductForm(productId) {
     orden: product.orden,
     activo: String(Boolean(product.activo))
   });
+  updateProductCategoryMode();
   updateSubmitLabels(el.productForm);
   updateFormChecks(el.productForm);
   setActiveView("carta");
@@ -4163,7 +4330,10 @@ function resetForm(form) {
 
 function openFormForCreate(form, entityLabel) {
   resetForm(form);
-  if (form === el.productForm) form.elements.imagen.value = suggestedProductImage();
+  if (form === el.productForm) {
+    renderProductCategorySelectOptions("");
+    form.elements.imagen.value = suggestedProductImage();
+  }
   if (form === el.cashierForm) {
     form.elements.rol.value = "cajero";
   }
@@ -4821,6 +4991,13 @@ async function saveProduct(event) {
   if (!beginFormSave(el.productForm, imageFile ? "Subiendo imagen..." : "Guardando producto...")) return;
   const savingHandle = showSectionSaving("upsertProduct", {});
   const data = getFormObject(el.productForm);
+  const categoryId = selectedProductCategoryFromForm(data);
+  if (!categoryId) {
+    hideSectionSaving(savingHandle);
+    finishFormSave(el.productForm);
+    toast("Selecciona una categoria o crea una nueva.");
+    return;
+  }
   const editing = Boolean(data.producto_id);
   const productId = data.producto_id || makeId("prod");
   const previousProduct = state.products.find(product => product.producto_id === productId);
@@ -4843,7 +5020,7 @@ async function saveProduct(event) {
 
   const product = {
     producto_id: productId,
-    categoria_id: data.categoria_id,
+    categoria_id: categoryId,
     nombre: data.nombre,
     precio: moneyToNumber(data.precio),
     descripcion: data.descripcion,

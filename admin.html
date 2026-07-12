@@ -312,7 +312,13 @@
         <form class="dashboard-form editor-form collapsed" id="product-form">
           <button class="form-close-x" type="button" data-collapse-form="product-form" aria-label="Cerrar formulario">X</button>
           <input type="hidden" name="producto_id">
-          <label>Categoría<input name="categoria_id" required placeholder="Ej.: hamburguesas, combos, bebidas"></label>
+          <label>Categoria
+            <select name="categoria_id" id="product-category-select" required>
+              <option value="">Selecciona una categoria</option>
+              <option value="__new__">Crear nueva categoria</option>
+            </select>
+          </label>
+          <label class="wide hidden" id="product-new-category-wrap">Nueva categoria<input name="categoria_id_new" placeholder="Ej.: hamburguesas, combos, bebidas"></label>
           <label>Nombre<input name="nombre" required placeholder="Ej: Hamburguesa Parrillera"></label>
           <label>Precio base<input name="precio" required inputmode="numeric" placeholder="Ej: $ 32.000"></label>
           <input type="hidden" name="imagen">

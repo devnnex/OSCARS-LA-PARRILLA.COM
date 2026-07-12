@@ -3979,6 +3979,7 @@ body:not(.admin-page) .categories {
   gap: 14px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+  scroll-behavior: smooth;
   scroll-snap-type: x proximity;
   padding: 2px 2px 18px;
 }
