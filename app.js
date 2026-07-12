@@ -3159,7 +3159,7 @@ function disableSearchAutofill() {
     el.search.setAttribute("data-1p-ignore", "true");
     el.search.setAttribute("data-form-type", "other");
     el.search.setAttribute("aria-autocomplete", "none");
-    el.search.setAttribute("readonly", "readonly");
+    el.search.removeAttribute("readonly");
   };
 
   harden();
@@ -3172,8 +3172,7 @@ function disableSearchAutofill() {
   window.setTimeout(() => stripEmailAutofill(true), 1400);
 
   el.search.addEventListener("focus", () => {
-    el.search.setAttribute("readonly", "readonly");
-    window.setTimeout(() => el.search.removeAttribute("readonly"), 80);
+    el.search.removeAttribute("readonly");
     stripEmailAutofill(true);
   });
 

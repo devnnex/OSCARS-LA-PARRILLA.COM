@@ -35,6 +35,9 @@ html {
   scroll-behavior: smooth;
   max-width: 100%;
   overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior-x: none;
   scrollbar-color: rgba(34, 197, 94, 0.82) rgba(34, 197, 94, 0.08);
   scrollbar-width: thin;
 }
@@ -80,6 +83,7 @@ body {
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
+  overscroll-behavior-x: none;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(238, 255, 244, 0.92)),
     linear-gradient(90deg, rgba(34, 197, 94, 0.06) 1px, transparent 1px),
@@ -3981,6 +3985,7 @@ body:not(.admin-page) .categories {
   overscroll-behavior-inline: contain;
   scroll-behavior: smooth;
   scroll-snap-type: x proximity;
+  touch-action: pan-x pan-y;
   padding: 2px 2px 18px;
 }
 
@@ -4417,4 +4422,32 @@ body:not(.admin-page) h2 {
 body:not(.admin-page) h3,
 body:not(.admin-page) strong {
   font-weight: 680;
+}
+
+@media (max-width: 768px) {
+  html,
+  body:not(.admin-page) {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  body:not(.admin-page) .app-shell,
+  body:not(.admin-page) .main,
+  body:not(.admin-page) .topbar,
+  body:not(.admin-page) .menu-tools,
+  body:not(.admin-page) .catalog,
+  body:not(.admin-page) .client-bottom-nav {
+    max-width: 100%;
+  }
+
+  body:not(.admin-page) input,
+  body:not(.admin-page) textarea,
+  body:not(.admin-page) select {
+    font-size: 16px;
+  }
+
+  body:not(.admin-page) .search-box input {
+    font-size: 16px;
+  }
 }
