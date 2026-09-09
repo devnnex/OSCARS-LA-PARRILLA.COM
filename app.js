@@ -1945,28 +1945,11 @@ async function submitCheckout(event) {
   const order = buildCheckoutOrder({ name, phone, method, address, selectedPayment, payment, notes, quote });
   const lines = buildWhatsAppOrderLines(order, quote);
   const quoteUrl = `https://wa.me/${BUSINESS_PHONE}?text=${encodeURIComponent(lines.join("\n"))}`;
-  const whatsappWindow = window.open("about:blank", "_blank");
-  if (whatsappWindow) whatsappWindow.opener = null;
   const submitButton = form.querySelector("button[type='submit']");
   if (submitButton) submitButton.disabled = true;
 
-  const recordPromise = recordOrder(order);
-  const recordedFast = await Promise.race([
-    recordPromise,
-    wait(ORDER_RECORD_FAST_TIMEOUT_MS).then(() => false)
-  ]);
-  if (!recordedFast) recordPromise.catch(() => {});
-
-  if (whatsappWindow) {
-    whatsappWindow.location.href = quoteUrl;
-  } else {
-    window.location.href = quoteUrl;
-  }
-
-  state.cart = [];
-  renderCart();
-  closeCheckout();
-  if (submitButton) submitButton.disabled = false;
+  recordOrder(order).catch(() => {});
+  window.location.href = quoteUrl;
 }
 
 async function recordOrder(order) {
