@@ -1091,7 +1091,7 @@ function renderProducts() {
   el.catalog.innerHTML = products.map(product => {
     const image = resolveProductImage(product);
     return `
-      <article class="product-card">
+      <article class="product-card" data-product-id="${escapeAttr(product.producto_id)}">
         <div>
           ${image ? `<div class="product-visual"><img src="${escapeAttr(image)}" alt="${escapeAttr(product.nombre)}" loading="lazy" onerror="this.onerror=null;this.closest('.product-visual')?.classList.add('image-load-error');this.remove();"></div>` : productVisualTemplate(product)}
           <div class="product-meta">
@@ -1111,6 +1111,12 @@ function renderProducts() {
 
   el.catalog.querySelectorAll("[data-add-product]").forEach(button => {
     button.addEventListener("click", () => openProductModal(button.dataset.addProduct));
+  });
+  el.catalog.querySelectorAll("[data-product-id]").forEach(card => {
+    card.addEventListener("click", event => {
+      if (event.target.closest("button")) return;
+      openProductModal(card.dataset.productId);
+    });
   });
 }
 
@@ -1479,6 +1485,7 @@ function renderCart() {
 
   el.cartItems.innerHTML = state.cart.map((item, index) => {
     const extras = item.extras || [];
+    const categoryText = item.category ? `Categoría: ${labelFromId(item.category)}` : "";
     const optionText = item.option_label ? `Opción: ${item.option_label}` : "";
     const flavorText = item.flavor_label ? `Sabor: ${item.flavor_label}` : "";
     const extrasText = extras.length
@@ -1488,6 +1495,7 @@ function renderCart() {
       <article class="cart-item">
         <div>
           <h3>${escapeHtml(item.title)}</h3>
+          ${categoryText ? `<small>${escapeHtml(categoryText)}</small>` : ""}
           ${optionText ? `<small>${escapeHtml(optionText)}</small>` : ""}
           ${flavorText ? `<small>${escapeHtml(flavorText)}</small>` : ""}
           <small>${escapeHtml(extrasText)}</small>
@@ -1732,6 +1740,7 @@ function checkoutProductSummaryRow(item) {
 
 function checkoutItemDetails(item) {
   const pieces = [];
+  if (item.category) pieces.push(`Categoría ${labelFromId(item.category)}`);
   if (item.option_label) pieces.push(item.option_label);
   if (item.flavor_label) pieces.push(`Sabor ${item.flavor_label}`);
   const extras = item.extras || [];
@@ -1949,6 +1958,10 @@ async function submitCheckout(event) {
   if (submitButton) submitButton.disabled = true;
 
   recordOrder(order).catch(() => {});
+  state.cart = [];
+  renderCart();
+  closeCheckout();
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   window.location.href = quoteUrl;
 }
 

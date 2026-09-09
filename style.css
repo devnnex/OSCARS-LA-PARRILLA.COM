@@ -1211,6 +1211,12 @@ select:focus {
   right: 16px;
 }
 
+#product-modal .modal-close {
+  color: #ffffff;
+  border-color: rgba(255, 180, 82, 0.9);
+  background: #f27405;
+}
+
 .modal-title {
   padding-right: 54px;
 }
@@ -2310,7 +2316,8 @@ form label {
 .toast {
   position: fixed;
   left: 18px;
-  bottom: 92px;
+  top: 92px;
+  bottom: auto;
   z-index: 150;
   max-width: min(520px, calc(100% - 28px));
   transform: translateX(calc(-100% - 24px));
