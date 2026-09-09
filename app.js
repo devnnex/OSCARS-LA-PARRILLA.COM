@@ -1581,7 +1581,9 @@ function getCheckoutQuote() {
   const method = form.querySelector("input[name='method']:checked")?.value || "recoger";
   const address = form.elements.address?.value.trim() || "";
   const subtotal = getCartTotals().subtotal;
-  const packaging = moneyToBigInt(getPackagingFee()) * qtyToBigInt(getCartProductCount());
+  const packaging = method === "mesa"
+    ? 0n
+    : moneyToBigInt(getPackagingFee()) * qtyToBigInt(getCartProductCount());
   const zone = method === "domicilio" ? matchDeliveryZone(address) : null;
   const delivery = method === "domicilio" ? moneyToBigInt(zone?.precio || 0) : 0n;
   return {
@@ -1899,7 +1901,9 @@ function updateCheckoutControls() {
   el.addressHelper.classList.toggle("hidden", quote.method !== "domicilio");
   el.checkoutForm.elements.address.required = quote.method === "domicilio";
   el.cartProductsCheckout.textContent = formatMoney(quote.subtotal);
-  el.cartPackaging.innerHTML = `${formatMoney(quote.packaging)} <small>${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())}</small>`;
+  el.cartPackaging.innerHTML = quote.method === "mesa"
+    ? `${formatMoney(quote.packaging)} <small>Sin icopor por consumo en mesa</small>`
+    : `${formatMoney(quote.packaging)} <small>${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())}</small>`;
   el.cartDeliveryLabel.textContent = quote.zone ? `Domicilio ${quote.zone.nombre}` : "Domicilio";
   el.cartDelivery.textContent = quote.method === "domicilio"
     ? (quote.zone ? formatMoney(quote.delivery) : "Por confirmar")
@@ -2027,49 +2031,50 @@ function normalizeCartItemForOrder(item) {
 }
 
 function buildWhatsAppOrderLines(order, quote, selectedPayment) {
-  const deliveryText = order.metodo === "recoger"
-    ? "Sin costo (recoge en el local)"
-    : (quote.zone ? `${formatMoney(quote.delivery)} (${quote.zone.nombre})` : "Por confirmar por WhatsApp");
+  const isDelivery = order.metodo === "domicilio";
+  const isTable = order.metodo === "mesa";
+  const methodText = isDelivery
+    ? "Domicilio"
+    : (isTable ? "Comer en la mesa" : "Recoger en el local");
+  const deliveryText = isDelivery
+    ? (quote.zone ? `${formatMoney(quote.delivery)} (${quote.zone.nombre})` : "Por confirmar por WhatsApp")
+    : (isTable ? "Sin costo (comer en la mesa)" : "Sin costo (recoge en el local)");
+  const packagingText = isTable
+    ? "Sin costo (sin icopor)"
+    : `${formatMoney(quote.packaging)} (${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())})`;
   const lines = [
-    "*Nueva orden - Oscar's Parrilla*",
+    "🍔🍟 *Nuevo Pedido - Oscar's Parrilla ✅*",
+    `👤 Cliente: ${order.cliente}`,
+    `📞 Teléfono: ${order.telefono}`,
+    `🚚 Tipo: ${methodText}`,
+    ...(isDelivery ? [`🏠 Dirección: ${order.direccion}`] : []),
+    ...(order.barrio ? [`📍 Barrio/Zona: ${order.barrio}`] : []),
+    `💳 Pago: ${order.pago}`,
+    ...(selectedPayment?.detalle ? [`🏦 Dato de pago: ${selectedPayment.detalle}`] : []),
     "",
-    "*Cliente*",
-    `Nombre: ${order.cliente}`,
-    `Telefono: ${order.telefono}`,
-    "",
-    "*Entrega*",
-    `Modalidad: ${order.metodo === "domicilio" ? "Domicilio" : "Recoger en el local"}`,
-    ...(order.metodo === "domicilio" ? [`Direccion: ${order.direccion}`] : ["Sede para recoger: Por confirmar"]),
-    ...(order.barrio ? [`Barrio/Zona: ${order.barrio}`] : []),
-    `Pago: ${order.pago}`,
-    ...(selectedPayment?.detalle ? [`Dato de pago: ${selectedPayment.detalle}`] : []),
-    "",
-    "*Productos*"
+    "🌭 *Detalle del pedido:*"
   ];
 
   order.items.forEach((item, index) => {
     const itemTotal = moneyToBigInt(item.precio) * qtyToBigInt(item.cantidad);
     const optionText = item.opcion ? ` (${item.opcion})` : "";
-    lines.push(`${index + 1}. ${item.cantidad} x ${item.nombre}${optionText} - ${formatMoney(itemTotal)}`);
-    if (item.sabor) lines.push(`   Sabor: ${item.sabor}`);
+    lines.push(`${index + 1}. ${item.cantidad}x ${item.nombre}${optionText} — *${formatMoney(itemTotal)}*`);
+    if (item.sabor) lines.push(`   🍕 Sabor: ${item.sabor}`);
     if (item.extras?.length) {
       item.extras.forEach(extra => {
         const extraTotal = moneyToBigInt(extra.precio) * qtyToBigInt(extra.cantidad);
-        lines.push(`   + ${extra.cantidad} x ${extra.nombre} - ${formatMoney(extraTotal)}`);
+        lines.push(`   ➕ ${extra.cantidad}x ${extra.nombre} (${formatMoney(extraTotal)})`);
       });
     }
   });
 
   lines.push("");
-  lines.push("*Totales*");
-  lines.push(`Productos: ${formatMoney(quote.subtotal)}`);
-  lines.push(`Empaque: ${formatMoney(quote.packaging)} (${getCartProductCount()} producto${getCartProductCount() === 1 ? "" : "s"} x ${formatMoney(getPackagingFee())})`);
-  lines.push(`Domicilio: ${deliveryText}`);
-  lines.push(`Total: ${formatMoney(quote.total)}`);
+  lines.push(`🧮 Subtotal: ${formatMoney(quote.subtotal)}`);
+  lines.push(`🥡 Empaque: ${packagingText}`);
+  lines.push(`🚗 Envío: ${deliveryText}`);
+  lines.push(`💰 *Total: ${formatMoney(quote.total)}*`);
   if (order.notas) {
-    lines.push("");
-    lines.push("*Notas*");
-    lines.push(order.notas);
+    lines.push(`📝 Notas: ${order.notas}`);
   }
   return lines;
 }
@@ -3372,6 +3377,4 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return CSS.escape(String(value));
   return String(value).replace(/["\\]/g, "\\$&");
 }
-
-
 

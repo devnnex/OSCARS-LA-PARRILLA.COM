@@ -1569,7 +1569,7 @@ form label {
 
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 5px;
   border: 1px solid var(--line);
@@ -4469,7 +4469,7 @@ body:not(.admin-page) strong {
   }
 
   body:not(.admin-page) .checkout-card .segmented {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   body:not(.admin-page) .checkout-card .checkout-products-head {
