@@ -1943,7 +1943,7 @@ async function submitCheckout(event) {
   }
 
   const order = buildCheckoutOrder({ name, phone, method, address, selectedPayment, payment, notes, quote });
-  const lines = buildWhatsAppOrderLines(order, quote, selectedPayment);
+  const lines = buildWhatsAppOrderLines(order, quote);
   const quoteUrl = `https://wa.me/${BUSINESS_PHONE}?text=${encodeURIComponent(lines.join("\n"))}`;
   const whatsappWindow = window.open("about:blank", "_blank");
   if (whatsappWindow) whatsappWindow.opener = null;
@@ -2017,6 +2017,7 @@ function normalizeCartItemForOrder(item) {
   return {
     producto_id: item.product_id,
     nombre: item.title,
+    categoria: item.category ? labelFromId(item.category) : "",
     opcion: item.option_label || "",
     sabor: item.flavor_label || "",
     precio: Number(item.price || 0),
@@ -2030,7 +2031,7 @@ function normalizeCartItemForOrder(item) {
   };
 }
 
-function buildWhatsAppOrderLines(order, quote, selectedPayment) {
+function buildWhatsAppOrderLines(order, quote) {
   const isDelivery = order.metodo === "domicilio";
   const isTable = order.metodo === "mesa";
   const methodText = isDelivery
@@ -2050,7 +2051,6 @@ function buildWhatsAppOrderLines(order, quote, selectedPayment) {
     ...(isDelivery ? [`🏠 Dirección: ${order.direccion}`] : []),
     ...(order.barrio ? [`📍 Barrio/Zona: ${order.barrio}`] : []),
     `💳 Pago: ${order.pago}`,
-    ...(selectedPayment?.detalle ? [`🏦 Dato de pago: ${selectedPayment.detalle}`] : []),
     "",
     "🌭 *Detalle del pedido:*"
   ];
@@ -2059,6 +2059,7 @@ function buildWhatsAppOrderLines(order, quote, selectedPayment) {
     const itemTotal = moneyToBigInt(item.precio) * qtyToBigInt(item.cantidad);
     const optionText = item.opcion ? ` (${item.opcion})` : "";
     lines.push(`${index + 1}. ${item.cantidad}x ${item.nombre}${optionText} — *${formatMoney(itemTotal)}*`);
+    if (item.categoria) lines.push(`   🍽️ Categoría: ${item.categoria}`);
     if (item.sabor) lines.push(`   🍕 Sabor: ${item.sabor}`);
     if (item.extras?.length) {
       item.extras.forEach(extra => {
@@ -3377,4 +3378,3 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return CSS.escape(String(value));
   return String(value).replace(/["\\]/g, "\\$&");
 }
-

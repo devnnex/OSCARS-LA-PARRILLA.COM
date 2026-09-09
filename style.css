@@ -2292,6 +2292,21 @@ form label {
   display: flex;
 }
 
+.floating-cart:not(.hidden) span {
+  animation: floatingCartCountBlink 1s ease-in-out infinite;
+}
+
+@keyframes floatingCartCountBlink {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.12);
+  }
+}
+
 .toast {
   position: fixed;
   left: 50%;
