@@ -4597,7 +4597,7 @@ function productVisualImage(product) {
 function adminProductThumbTemplate(product) {
   const image = productVisualImage(product);
   if (image) {
-    return `<img class="admin-product-thumb" src="${escapeAttr(image)}" alt="" onerror="this.onerror=null;this.classList.add('image-load-error');this.remove();">`;
+    return `<img class="admin-product-thumb" src="${escapeAttr(image)}" alt="" onerror="this.onerror=null;this.classList.add('image-load-error');this.style.visibility='hidden';">`;
   }
   const label = labelFromId(product.categoria_id).slice(0, 2).toUpperCase();
   return `<span class="admin-product-thumb admin-product-thumb-empty" aria-hidden="true">${escapeHtml(label)}</span>`;
