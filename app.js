@@ -1578,7 +1578,6 @@ function openCheckout() {
     return;
   }
   closeCart();
-  el.checkoutForm.reset();
   setCheckoutStep(1);
   updateCheckoutControls();
   openLayer(el.checkoutModal);
@@ -1960,6 +1959,7 @@ async function submitCheckout(event) {
   recordOrder(order).catch(() => {});
   state.cart = [];
   renderCart();
+  el.checkoutForm.reset();
   closeCheckout();
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   window.location.href = quoteUrl;
@@ -2013,7 +2013,6 @@ function normalizeCartItemForOrder(item) {
   return {
     producto_id: item.product_id,
     nombre: item.title,
-    categoria: item.category ? labelFromId(item.category) : "",
     opcion: item.option_label || "",
     sabor: item.flavor_label || "",
     precio: Number(item.price || 0),
@@ -2055,7 +2054,6 @@ function buildWhatsAppOrderLines(order, quote) {
     const itemTotal = moneyToBigInt(item.precio) * qtyToBigInt(item.cantidad);
     const optionText = item.opcion ? ` (${item.opcion})` : "";
     lines.push(`${index + 1}. ${item.cantidad}x ${item.nombre}${optionText} — *${formatMoney(itemTotal)}*`);
-    if (item.categoria) lines.push(`   🍽️ Categoría: ${item.categoria}`);
     if (item.sabor) lines.push(`   🍕 Sabor: ${item.sabor}`);
     if (item.extras?.length) {
       item.extras.forEach(extra => {
